@@ -1,4 +1,5 @@
 import java.io.FileInputStream
+import java.util.Base64
 import java.util.Properties
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -6,6 +7,22 @@ val useKeystoreProperties = keystorePropertiesFile.canRead()
 val keystoreProperties = Properties()
 if (useKeystoreProperties) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
+// DiamaneOS: the repository metadata key (signify Ed25519 public key, the second line of
+// apps.<version>.pub) comes from REPO_PUBLIC_KEY or from repo-public-key.pub. There is no
+// fallback to another project's key: the build fails while neither holds a valid key.
+fun repoPublicKey(): String {
+    val file = rootProject.file("repo-public-key.pub")
+    val key = System.getenv("REPO_PUBLIC_KEY")
+        ?: file.readLines().filter { it.isNotBlank() && !it.startsWith("untrusted comment:") }.singleOrNull()
+        ?: ""
+    val decoded = try { Base64.getDecoder().decode(key) } catch (e: IllegalArgumentException) { null }
+    if (decoded == null || decoded.size != 42 || decoded[0] != 'E'.code.toByte() || decoded[1] != 'd'.code.toByte()) {
+        throw GradleException("No App Store repository key: put the signify public key in " +
+            "repo-public-key.pub (the release key from the key ceremony) or set REPO_PUBLIC_KEY (test builds)")
+    }
+    return key
 }
 
 plugins {
@@ -47,11 +64,9 @@ android {
         versionName = versionCode.toString()
 
         buildConfigField(String::class.java.name, "REPO_BASE_URL",
-            "\"${System.getenv("REPO_BASE_URL") ?: "https://apps.grapheneos.org"}\"")
+            "\"${System.getenv("REPO_BASE_URL") ?: "https://apps.diamaneos.de"}\"")
 
-        buildConfigField(String::class.java.name, "REPO_PUBLIC_KEY", "\"${
-            System.getenv("REPO_PUBLIC_KEY") ?: "RWQtZwEu1br1lMh911L3yPOs97cQb9LOks/ALBbqGl21ul695ocWR/ir"
-        }\"")
+        buildConfigField(String::class.java.name, "REPO_PUBLIC_KEY", "\"${repoPublicKey()}\"")
 
         buildConfigField(String::class.java.name, "REPO_KEY_VERSION",
             "\"${System.getenv("REPO_KEY_VERSION") ?: "0"}\"")
