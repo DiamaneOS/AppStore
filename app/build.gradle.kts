@@ -60,8 +60,9 @@ android {
         applicationId = "app.grapheneos.apps"
         minSdk = 31
         targetSdk = 36
-        versionCode = 36
-        versionName = versionCode.toString()
+        // DiamaneOS: upstream version x 100 + DiamaneOS revision (36.1 = 3601), only ever rising
+        versionCode = 3601
+        versionName = "36.1"
 
         buildConfigField(String::class.java.name, "REPO_BASE_URL",
             "\"${System.getenv("REPO_BASE_URL") ?: "https://apps.diamaneos.de"}\"")
