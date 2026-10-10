@@ -6,6 +6,10 @@
         app:allowDividerBelow="true"
         app:title="@string/updates_screen_title">
 
+        <Preference app:key="download_servers"
+            app:title="@string/download_servers_title"
+            app:summary="@string/download_servers_summary" />
+
         <SwitchPreferenceCompat
             app:title="@string/pref_background_update_check"
             app:summaryOn="@string/pref_background_update_check_summary_on"

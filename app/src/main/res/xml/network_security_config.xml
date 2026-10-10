@@ -2,7 +2,8 @@
 <network-security-config>
     <base-config cleartextTrafficPermitted="false"/>
     <domain-config>
-        <domain includeSubdomains="true">apps.grapheneos.org</domain>
+        <domain>apps.diamaneos.de</domain>
+        <domain>apps-na.diamaneos.de</domain>
         <pin-set expiration="2027-04-01">
             <!-- ISRG Root X1 -->
             <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin>

@@ -1,30 +1,29 @@
 package app.grapheneos.apps.util
 
 import android.net.Network
+import app.grapheneos.apps.core.appContext
+import app.grapheneos.apps.core.requireCatalogConfiguration
+import de.diamaneos.downloads.DownloadPolicy
+import de.diamaneos.downloads.DownloadPolicyClient
+import de.diamaneos.downloads.DownloadTransport
 import java.net.HttpURLConnection
 import java.net.ProtocolException
-import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import org.grapheneos.tls.ModernTLSSocketFactory
 
 private val tlsSocketFactory = ModernTLSSocketFactory()
 
 fun openConnection(network: Network?, urlString: String, configure: HttpURLConnection.() -> Unit): ScopedHttpConnection {
-    val url = URL(urlString)
-    val connection = if (network != null) {
-        network.openConnection(url)
-    } else {
-        url.openConnection()
-    } as HttpsURLConnection
-
-    connection.apply {
-        sslSocketFactory = tlsSocketFactory
-        connectTimeout = 10_000
-        readTimeout = 30_000
-    }
-
-    connection.configure()
-    connection.connect()
+    requireCatalogConfiguration()
+    val path = DownloadPolicy.appsPath(urlString)
+    val connection = DownloadTransport.open(DownloadPolicyClient.read(appContext), true, path,
+        { url -> (network?.openConnection(url) ?: url.openConnection()) as HttpsURLConnection },
+        { conn ->
+            conn.sslSocketFactory = tlsSocketFactory
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 30_000
+            conn.configure()
+        })
     return ScopedHttpConnection(connection)
 }
 
