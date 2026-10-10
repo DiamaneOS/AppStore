@@ -10,12 +10,14 @@ ROOT = Path(__file__).resolve().parents[1]
 JAVA = {
     'android/Manifest.java': 'package android; public class Manifest { public static class permission { public static final String WRITE_SECURE_SETTINGS="android.permission.WRITE_SECURE_SETTINGS"; } }',
     'android/os/UserManager.java': 'package android.os; public class UserManager { public boolean isSystemUser(){return false;} }',
-    'android/provider/Settings.java': 'package android.provider; public class Settings { public static class Global {\n        public static String value;\n        public static String getString(android.content.ContentResolver r,String k){if(!k.equals("diamaneos_download_server_policy"))throw new AssertionError();return value;}\n        public static boolean putString(android.content.ContentResolver r,String k,String v){throw new SecurityException("Unprivileged fixture");} } }',
+    'android/net/Uri.java': 'package android.net; public class Uri { public final String value; public Uri(String s){value=s;} }',
+    'android/database/Cursor.java': 'package android.database; public class Cursor implements AutoCloseable {\n        public int getCount(){return android.provider.Settings.Global.value==null?0:1;} public int getColumnCount(){return 1;}\n        public boolean moveToFirst(){return true;} public String getString(int i){return android.provider.Settings.Global.value;} public void close(){} }',
+    'android/provider/Settings.java': 'package android.provider; public class Settings { public static class Global {\n        public static String value; public static boolean unavailable,deny; public static final String VALUE="value";\n        public static android.net.Uri getUriFor(String k){if(!k.equals("diamaneos_download_server_policy"))throw new AssertionError();return new android.net.Uri("content://settings/global/"+k);}\n        public static boolean putString(android.content.ContentResolver r,String k,String v){throw new SecurityException("Unprivileged fixture");} } }',
     'android/net/Network.java': '''package android.net; public class Network {
         public java.net.URLConnection openConnection(java.net.URL u) throws java.io.IOException {return u.openConnection();} }''',
     'android/content/pm/PackageManager.java': 'package android.content.pm; public class PackageManager { public static final int SIGNATURE_MATCH=0,PERMISSION_GRANTED=0; public int checkSignatures(String a,String b){return 0;} }',
     'android/content/Context.java': 'package android.content; public class Context {\n        public android.content.pm.PackageManager getPackageManager(){return new android.content.pm.PackageManager();}\n        public ContentResolver getContentResolver(){return new ContentResolver();}\n        public <T> T getSystemService(Class<T> t){return t.cast(new android.os.UserManager());}\n        public int checkSelfPermission(String p){return -1;} }',
-    'android/content/ContentResolver.java': 'package android.content; public class ContentResolver {}',
+    'android/content/ContentResolver.java': 'package android.content; public class ContentResolver {\n        public android.database.Cursor query(android.net.Uri uri,String[] p,String w,String[] a,String o){\n            if(!uri.value.equals("content://settings/global/diamaneos_download_server_policy"))throw new AssertionError();\n            if(android.provider.Settings.Global.deny)throw new SecurityException("Authority fixture refusal");\n            if(android.provider.Settings.Global.unavailable)return null; return new android.database.Cursor();} }',
     'android/content/ComponentName.java': 'package android.content; public class ComponentName { public ComponentName(String p,String c){} }',
     'android/content/Intent.java': 'package android.content; public class Intent { public Intent(String a){} public Intent setComponent(ComponentName c){return this;} }',
     'org/grapheneos/tls/ModernTLSSocketFactory.java': '''package org.grapheneos.tls; public class ModernTLSSocketFactory extends javax.net.ssl.SSLSocketFactory {
@@ -129,6 +131,25 @@ fun main(args: Array<String>) {
             check(getCachedRepo().isDummy)
             refuse { fetchRepo(Repo(JSONObject(), "fixture", true)) }
             check(NetworkFixture.requests.isEmpty() && AtomicFile2.reads == 0)
+        }
+        "policy_unavailable" -> {
+            for (fallback in listOf(false,true)) {
+                NetworkFixture.policy("canada", fallback)
+                android.provider.Settings.Global.unavailable = true
+                try { fetchRepo(Repo(JSONObject(), "fixture", true));error("Expected refusal") }
+                catch (e: IOException) { check(!de.diamaneos.downloads.DownloadTransport.retryable(e)) }
+                check(NetworkFixture.requests.isEmpty())
+                // Also fail before the HTTP adapter's alternate-origin loop and omit optional icons.
+                try { openConnection(null,"https://apps-na.diamaneos.de/metadata.1.0.sjson",{});error("Expected refusal") }
+                catch (e: IOException) { }
+                check(IconFixture(JSONObject()).iconUrl == null)
+                android.provider.Settings.Global.unavailable = false
+                android.provider.Settings.Global.deny = true
+                try { fetchRepo(Repo(JSONObject(), "fixture", true));error("Expected refusal") }
+                catch (e: IOException) { }
+                android.provider.Settings.Global.deny = false
+                check(NetworkFixture.requests.isEmpty() && FileVerifier.calls == 0)
+            }
         }
         "selected_region" -> {
             NetworkFixture.policy("canada", false)
@@ -256,6 +277,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_key_has_no_network_or_cache_effect(self): self.scenario('missing_key', 'disabled')
+    def test_authority_failure_never_contacts_either_region(self): self.scenario('policy_unavailable')
     def test_shared_region_and_verifier_calls(self): self.scenario('selected_region')
     def test_one_opted_in_fallback(self): self.scenario('fallback_once')
     def test_signature_failure_never_parses_caches_or_falls_back(self): self.scenario('signature_failure')

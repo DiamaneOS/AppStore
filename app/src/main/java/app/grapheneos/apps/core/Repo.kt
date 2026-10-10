@@ -192,12 +192,14 @@ class RPackageContainer(val repo: Repo, val packageName: String,
     }.toTypedArray()
 
     private val iconType = json.opt("iconType") as String?
-    val iconUrl: String? get() = run {
+    val iconUrl: String? get() = try {
         if (iconType != null) {
             "$REPO_BASE_URL/packages/$manifestPackageName/icon.$iconType"
         } else {
             null
         }
+    } catch (e: java.io.IOException) {
+        null
     }
 
     // Used for setting release channel for packages that are closely linked together.

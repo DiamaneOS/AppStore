@@ -2,6 +2,8 @@
 
 Apps reads the shared Settings.Global policy and links to Network & internet. Europe is the default; Canada and fallback are optional. Catalogs, packages and icons use fixed HTTPS Apps origins. Redirects and TLS failures are refused.
 
+Missing or unknown policy selects Europe with fallback off. Authority read failures stop requests before contacting a server.
+
 Sources in `app/src/main/java/de/diamaneos/downloads` match Settings' `DiamaneOSDownloadPolicyClient`. Reads use the public SDK without extra permissions. Settings' main-user controls use existing `WRITE_SECURE_SETTINGS`; trusted platform writers retain device-wide control.
 
 `REPO_PUBLIC_KEY` supplies the independently approved catalog key; there is no inherited key or configurable origin. `REPO_KEY_VERSION` is bounded decimal text. Missing keys disable network and cached-catalog use. Signature, timestamp, hash and APK identity checks remain required. Caches bind the key and version.

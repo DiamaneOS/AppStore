@@ -6,6 +6,8 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
+import java.io.IOException;
 import android.os.UserManager;
 import android.provider.Settings;
 
@@ -14,11 +16,20 @@ public final class DownloadPolicyClient {
     public static final String KEY = "diamaneos_download_server_policy";
     private DownloadPolicyClient() {}
 
-    public static DownloadPolicy read(Context context) {
-        try {
-            return DownloadPolicy.decode(Settings.Global.getString(context.getContentResolver(), KEY));
+    public static DownloadPolicy read(Context context) throws IOException {
+        // getString() conflates an unset key with provider failure. Query distinguishes them.
+        try (Cursor cursor = context.getContentResolver().query(Settings.Global.getUriFor(KEY),
+                new String[]{Settings.Global.VALUE}, null, null, null)) {
+            if (cursor == null) throw new IOException("Download server policy is unavailable");
+            int rows = cursor.getCount();
+            if (rows < 0 || rows > 1 || cursor.getColumnCount() != 1) {
+                throw new IOException("Unexpected download policy response");
+            }
+            if (rows == 0) return DownloadPolicy.DEFAULT;
+            if (!cursor.moveToFirst()) throw new IOException("Unreadable download policy response");
+            return DownloadPolicy.decode(cursor.getString(0));
         } catch (RuntimeException e) {
-            return DownloadPolicy.DEFAULT;
+            throw new IOException("Download server policy is unavailable", e);
         }
     }
 
