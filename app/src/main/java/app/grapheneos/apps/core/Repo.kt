@@ -17,7 +17,6 @@ import androidx.core.content.getSystemService
 import androidx.core.util.getOrElse
 import androidx.core.util.keyIterator
 import androidx.core.util.size
-import app.grapheneos.apps.BuildConfig
 import app.grapheneos.apps.PackageStates
 import app.grapheneos.apps.R
 import app.grapheneos.apps.util.asStringList
@@ -35,7 +34,9 @@ import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Locale
 
-const val REPO_BASE_URL = BuildConfig.REPO_BASE_URL
+val REPO_BASE_URL: String
+    get() = de.diamaneos.downloads.DownloadPolicyClient.read(appContext)
+        .url(true, CATALOG_PATH).let { "https://${it.host}" }
 
 class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
     val timestamp = json.getLong("time")
@@ -190,13 +191,15 @@ class RPackageContainer(val repo: Repo, val packageName: String,
         arr
     }.toTypedArray()
 
-    val iconUrl: String? = run {
-        val iconType = json.opt("iconType") as String?
+    private val iconType = json.opt("iconType") as String?
+    val iconUrl: String? get() = try {
         if (iconType != null) {
             "$REPO_BASE_URL/packages/$manifestPackageName/icon.$iconType"
         } else {
             null
         }
+    } catch (e: java.io.IOException) {
+        null
     }
 
     // Used for setting release channel for packages that are closely linked together.

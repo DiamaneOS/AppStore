@@ -1,34 +1,59 @@
 package app.grapheneos.apps.util
 
 import android.net.Network
+import app.grapheneos.apps.core.CATALOG_PATH
+import app.grapheneos.apps.core.appContext
+import app.grapheneos.apps.core.requireCatalogConfiguration
+import de.diamaneos.downloads.DownloadPolicy
+import de.diamaneos.downloads.DownloadPolicyClient
+import de.diamaneos.downloads.DownloadTransport
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.ProtocolException
-import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.HttpsURLConnection
 import org.grapheneos.tls.ModernTLSSocketFactory
 
 private val tlsSocketFactory = ModernTLSSocketFactory()
 
-fun openConnection(network: Network?, urlString: String, configure: HttpURLConnection.() -> Unit): ScopedHttpConnection {
-    val url = URL(urlString)
-    val connection = if (network != null) {
-        network.openConnection(url)
-    } else {
-        url.openConnection()
-    } as HttpsURLConnection
-
-    connection.apply {
-        sslSocketFactory = tlsSocketFactory
-        connectTimeout = 10_000
-        readTimeout = 30_000
-    }
-
-    connection.configure()
-    connection.connect()
-    return ScopedHttpConnection(connection)
+private val baseConfigure = DownloadTransport.Configure { conn ->
+    conn.sslSocketFactory = tlsSocketFactory
+    conn.connectTimeout = 10_000
+    conn.readTimeout = 30_000
 }
 
-class ScopedHttpConnection(val v: HttpURLConnection) : AutoCloseable {
+fun openConnection(network: Network?, urlString: String, configure: HttpURLConnection.() -> Unit): ScopedHttpConnection {
+    requireCatalogConfiguration()
+    val path = DownloadPolicy.appsPath(urlString)
+    val connector = DownloadTransport.Connector { url ->
+        (network?.openConnection(url) ?: url.openConnection()) as HttpsURLConnection
+    }
+    val fullConfigure = DownloadTransport.Configure { conn ->
+        baseConfigure.apply(conn)
+        conn.configure()
+    }
+    val route = DownloadTransport.route(DownloadPolicyClient.read(appContext), true, CATALOG_PATH,
+        connector, baseConfigure)
+    val connection = DownloadTransport.open(route, path, 0, connector, fullConfigure)
+    return ScopedHttpConnection(connection, route, path, connector, fullConfigure)
+}
+
+class ScopedHttpConnection internal constructor(
+    val v: HttpsURLConnection,
+    private val route: DownloadTransport.Route,
+    private val path: String,
+    private val connector: DownloadTransport.Connector,
+    private val configure: DownloadTransport.Configure,
+) : AutoCloseable {
+    // A failure or stall mid-way continues on the other server from the same offset.
+    fun copyBody(out: OutputStream, offset: Long, total: Long, progress: AtomicLong,
+            beforeWrite: () -> Unit): Long =
+        DownloadTransport.copy(route, path, v, offset, total, { buffer, count ->
+            beforeWrite()
+            out.write(buffer, 0, count)
+            progress.addAndGet(count.toLong())
+        }, connector, configure)
+
     override fun close() {
         v.disconnect()
     }

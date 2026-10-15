@@ -441,10 +441,9 @@ class InstallTask(
                     throwResponseCodeException(conn.v)
                 }
 
-                conn.v.inputStream.use { input ->
                 FileOutputStream(fd).use { output ->
-                    input.copyTo2(output, job, progress = downloadProgress)
-                }}
+                    conn.copyBody(output, curSize, fullSize, downloadProgress) { job.ensureActive() }
+                }
             }
         }
     }
