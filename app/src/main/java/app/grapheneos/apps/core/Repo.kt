@@ -36,7 +36,7 @@ import java.util.Locale
 
 val REPO_BASE_URL: String
     get() = de.diamaneos.downloads.DownloadPolicyClient.read(appContext)
-        .url(true, "metadata.1.0.sjson", false).let { "https://${it.host}" }
+        .url(true, CATALOG_PATH).let { "https://${it.host}" }
 
 class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
     val timestamp = json.getLong("time")
