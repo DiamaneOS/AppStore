@@ -86,9 +86,16 @@ import javax.net.ssl.*
 import org.json.JSONObject
 
 object NetworkFixture {
-    val requests = mutableListOf<URL>()
+    val opened: MutableList<HttpsURLConnection> = java.util.Collections.synchronizedList(mutableListOf())
+    // GET requests only. Automatic adds a HEAD probe per server.
+    val requests: List<URL> get() = synchronized(opened) { opened.filter { it.requestMethod != "HEAD" }.map { it.url } }
+    val probes: Int get() = synchronized(opened) { opened.count { it.requestMethod == "HEAD" } }
+    val ranges: List<String?> get() = synchronized(opened) { opened.filter { it.requestMethod != "HEAD" }.map { it.getRequestProperty("Range") } }
+    // The first GET's answer. Canada's probe can be made to fail, so Europe goes first.
     var code = 200
     var error: IOException? = null
+    var failAt = -1L
+    var canadaProbeFails = false
     var body = "fixture catalog JSON\\n".toByteArray() + "X".repeat(100).toByteArray() + "\\n".toByteArray()
     fun install() {
         // Keep TLS entirely synthetic, including HttpsURLConnection's constructor default.
@@ -98,27 +105,50 @@ object NetworkFixture {
             object : URLStreamHandler() {
                 override fun openConnection(url: URL): URLConnection {
                     check(url.host in setOf("apps.diamaneos.de", "apps-na.diamaneos.de"))
-                    requests += url
-                    return object : HttpsURLConnection(url) {
+                    val connection = object : HttpsURLConnection(url) {
+                        fun first() = synchronized(opened) { opened.first { it.requestMethod != "HEAD" } } === this
+                        fun start() = getRequestProperty("Range")?.removePrefix("bytes=")?.removeSuffix("-")?.toLong() ?: 0L
                         override fun connect() = Unit
                         override fun disconnect() = Unit
                         override fun usingProxy() = false
                         override fun getResponseCode(): Int {
                             check(!instanceFollowRedirects)
-                            if (requests.size == 1) error?.let { throw it }
-                            return if(requests.size == 1) code else 200
+                            if (requestMethod == "HEAD") return if (canadaProbeFails && url.host == "apps-na.diamaneos.de") 503 else 200
+                            if (first()) error?.let { throw it }
+                            val answer = if (first()) code else 200
+                            return if (answer == 200 && start() > 0) 206 else answer
                         }
-                        override fun getInputStream(): InputStream = body.inputStream()
+                        override fun getContentLengthLong() = body.size - start()
+                        override fun getHeaderField(name: String): String? =
+                            if (name == "Content-Range" && start() > 0) "bytes ${start()}-${body.size - 1}/${body.size}" else null
+                        override fun getInputStream(): InputStream {
+                            val stop = if (first()) failAt else -1L
+                            return object : InputStream() {
+                                var at = start()
+                                override fun read(): Int = throw UnsupportedOperationException()
+                                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                                    if (at == stop) throw SocketException("fixture reset")
+                                    val end = if (stop > at) stop else body.size.toLong()
+                                    if (at >= end) return -1
+                                    val count = minOf(len.toLong(), end - at).toInt()
+                                    System.arraycopy(body, at.toInt(), b, off, count)
+                                    at += count
+                                    return count
+                                }
+                            }
+                        }
                         override fun getCipherSuite(): String = throw UnsupportedOperationException()
                         override fun getLocalCertificates(): Array<java.security.cert.Certificate>? = null
                         override fun getServerCertificates(): Array<java.security.cert.Certificate> = throw UnsupportedOperationException()
                     }
+                    opened += connection
+                    return connection
                 }
             }
         }
     }
-    fun policy(region: String, fallback: Boolean) {
-        android.provider.Settings.Global.value = DownloadPolicy.require(1,region,fallback).encode()
+    fun policy(mode: String) {
+        android.provider.Settings.Global.value = DownloadPolicy.require(mode).encode()
     }
 }
 fun refuse(action: () -> Unit) {
@@ -127,7 +157,7 @@ fun refuse(action: () -> Unit) {
 }
 fun main(args: Array<String>) {
     NetworkFixture.install()
-    NetworkFixture.policy("primary_eu", true)
+    NetworkFixture.policy("primary_eu")
     when(args[0]) {
         "missing_key" -> {
             check(getCachedRepo().isDummy)
@@ -135,8 +165,8 @@ fun main(args: Array<String>) {
             check(NetworkFixture.requests.isEmpty() && AtomicFile2.reads == 0)
         }
         "policy_unavailable" -> {
-            for (fallback in listOf(false,true)) {
-                NetworkFixture.policy("canada", fallback)
+            for (mode in listOf("canada", "automatic")) {
+                NetworkFixture.policy(mode)
                 android.provider.Settings.Global.unavailable = true
                 try { fetchRepo(Repo(JSONObject(), "fixture", true));error("Expected refusal") }
                 catch (e: IOException) { check(!de.diamaneos.downloads.DownloadTransport.retryable(e)) }
@@ -154,17 +184,39 @@ fun main(args: Array<String>) {
             }
         }
         "selected_region" -> {
-            NetworkFixture.policy("canada", false)
+            NetworkFixture.policy("canada")
             val result = fetchRepo(Repo(JSONObject(), "fixture", true))
             check(result.timestamp == 1770000001L)
             check(NetworkFixture.requests.single().host == "apps-na.diamaneos.de")
             check(FileVerifier.calls == 1 && JSONObject.parsed == 1)
         }
-        "fallback_once" -> {
+        "automatic_failover" -> {
+            NetworkFixture.policy("automatic")
+            NetworkFixture.canadaProbeFails = true
             NetworkFixture.code = 503
             fetchRepo(Repo(JSONObject(), "fixture", true))
             check(NetworkFixture.requests.map { it.host } == listOf("apps.diamaneos.de", "apps-na.diamaneos.de"))
-            check(FileVerifier.calls == 1)
+            check(NetworkFixture.probes == 2 && FileVerifier.calls == 1)
+        }
+        "apk_resume" -> {
+            NetworkFixture.policy("automatic")
+            NetworkFixture.canadaProbeFails = true
+            NetworkFixture.body = ByteArray(40_000) { (it * 31).toByte() }
+            NetworkFixture.failAt = 10_000
+            for (offset in listOf(0L, 5_000L)) {
+                val out = ByteArrayOutputStream()
+                val progress = java.util.concurrent.atomic.AtomicLong()
+                openConnection(null, "https://apps.diamaneos.de/packages/app.fixture/1/base.apk.gz") {
+                    if (offset > 0) addRequestProperty("Range", "bytes=$offset-")
+                }.use { conn ->
+                    check(conn.copyBody(out, offset, 40_000, progress) {} == 40_000L)
+                }
+                check(out.toByteArray().contentEquals(NetworkFixture.body.copyOfRange(offset.toInt(), 40_000)))
+                check(progress.get() == 40_000 - offset)
+                check(NetworkFixture.requests.takeLast(2).map { it.host } == listOf("apps.diamaneos.de", "apps-na.diamaneos.de"))
+                check(NetworkFixture.ranges.last() == "bytes=10000-")
+                NetworkFixture.opened.clear()
+            }
         }
         "signature_failure" -> {
             FileVerifier.allowed = false
@@ -178,12 +230,16 @@ fun main(args: Array<String>) {
             check(FileVerifier.calls == 1 && NetworkFixture.requests.size == 1 && AtomicFile2.bytes == null)
         }
         "tls_or_redirect" -> {
+            NetworkFixture.policy("automatic")
+            NetworkFixture.canadaProbeFails = true
             NetworkFixture.error = SSLHandshakeException("fixture")
             try { openConnection(null, "https://apps.diamaneos.de/metadata.1.0.sjson", {}) ; error("Expected refusal") }
             catch (e: SSLException) { }
             check(NetworkFixture.requests.size == 1)
         }
         "redirect" -> {
+            NetworkFixture.policy("automatic")
+            NetworkFixture.canadaProbeFails = true
             NetworkFixture.code = 302
             try { openConnection(null, "https://apps.diamaneos.de/metadata.1.0.sjson", {});error("Expected refusal") }
             catch (e: ProtocolException) { }
@@ -209,7 +265,9 @@ fun main(args: Array<String>) {
         "icon_policy" -> {
             val icon = IconFixture(JSONObject())
             check(icon.iconUrl == "https://apps.diamaneos.de/packages/app.fixture/icon.png")
-            NetworkFixture.policy("canada", false)
+            NetworkFixture.policy("automatic")
+            check(icon.iconUrl == "https://apps.diamaneos.de/packages/app.fixture/icon.png")
+            NetworkFixture.policy("canada")
             check(icon.iconUrl == "https://apps-na.diamaneos.de/packages/app.fixture/icon.png")
             check(NetworkFixture.requests.isEmpty())
         }
@@ -281,7 +339,8 @@ class AdapterTests(unittest.TestCase):
     def test_missing_key_has_no_network_or_cache_effect(self): self.scenario('missing_key', 'disabled')
     def test_authority_failure_never_contacts_either_region(self): self.scenario('policy_unavailable')
     def test_shared_region_and_verifier_calls(self): self.scenario('selected_region')
-    def test_one_opted_in_fallback(self): self.scenario('fallback_once')
+    def test_automatic_moves_to_other_server(self): self.scenario('automatic_failover')
+    def test_apk_download_resumes_on_other_server(self): self.scenario('apk_resume')
     def test_signature_failure_never_parses_caches_or_falls_back(self): self.scenario('signature_failure')
     def test_downgrade_never_caches_or_falls_back(self): self.scenario('downgrade_failure')
     def test_tls_failure_not_retried(self): self.scenario('tls_or_redirect')
