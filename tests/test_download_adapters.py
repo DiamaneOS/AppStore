@@ -299,7 +299,7 @@ class AdapterTests(unittest.TestCase):
             out = Path(cls.tmp.name) / variant
             out.mkdir()
             files = dict(JAVA)
-            files['app/grapheneos/apps/BuildConfig.java'] = f'package app.grapheneos.apps; public class BuildConfig {{ public static final String REPO_PUBLIC_KEY="{key}", REPO_KEY_VERSION="0"; }}'
+            files['app/grapheneos/apps/BuildConfig.java'] = f'package app.grapheneos.apps; public class BuildConfig {{ public static final String REPO_PUBLIC_KEY="{key}", REPO_KEY_VERSION="0"; public static final boolean REPO_STAGING=false; }}'
             for name, body in files.items():
                 p = out / name
                 p.parent.mkdir(parents=True, exist_ok=True)
@@ -352,7 +352,7 @@ class AdapterTests(unittest.TestCase):
     def test_fixed_pinned_domains_and_no_catalog_key_default(self):
         doc = ET.parse(ROOT / 'app/src/main/res/xml/network_security_config.xml').getroot()
         config = doc.find('domain-config')
-        self.assertEqual({x.text for x in config.findall('domain')}, {'apps.diamaneos.de', 'apps-na.diamaneos.de'})
+        self.assertEqual({x.text for x in config.findall('domain')}, {'apps.diamaneos.de', 'apps-na.diamaneos.de', 'apps.staging.diamaneos.de'})
         self.assertTrue(config.findall('pin-set/pin'))
         gradle = (ROOT / 'app/build.gradle.kts').read_text()
         self.assertNotIn('REPO_BASE_URL', gradle)

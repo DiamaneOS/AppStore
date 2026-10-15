@@ -4,6 +4,7 @@
     <domain-config>
         <domain includeSubdomains="false">apps.diamaneos.de</domain>
         <domain includeSubdomains="false">apps-na.diamaneos.de</domain>
+        <domain includeSubdomains="false">apps.staging.diamaneos.de</domain>
         <pin-set expiration="2027-04-01">
             <!-- ISRG Root X1 -->
             <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin>

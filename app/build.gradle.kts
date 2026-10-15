@@ -47,13 +47,19 @@ android {
         versionCode = 3601
         versionName = "36.1"
 
-        // A release supplies its independently approved public catalog key. No inherited default.
+        // The build supplies the catalog key: the release key for official builds, a test key
+        // for test builds. There is no default, and GrapheneOS's key is refused.
         val catalogKey = System.getenv("REPO_PUBLIC_KEY") ?: ""
         val catalogVersion = System.getenv("REPO_KEY_VERSION") ?: "0"
+        // Test builds may use the staging server instead of apps.diamaneos.de and apps-na.
+        val catalogServer = System.getenv("REPO_SERVER") ?: "production"
         require(catalogKey.isEmpty() || catalogKey.matches(Regex("[A-Za-z0-9+/]{56}")))
+        require(catalogKey != "RWQtZwEu1br1lMh911L3yPOs97cQb9LOks/ALBbqGl21ul695ocWR/ir")
         require(catalogVersion.matches(Regex("0|[1-9][0-9]{0,5}")))
+        require(catalogServer == "production" || catalogServer == "staging")
         buildConfigField(String::class.java.name, "REPO_PUBLIC_KEY", "\"$catalogKey\"")
         buildConfigField(String::class.java.name, "REPO_KEY_VERSION", "\"$catalogVersion\"")
+        buildConfigField("boolean", "REPO_STAGING", (catalogServer == "staging").toString())
     }
 
     buildTypes {

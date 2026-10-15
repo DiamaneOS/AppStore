@@ -10,6 +10,8 @@ Redirects and TLS failures are refused and never move to the other server. Signa
 
 Sources in `app/src/main/java/de/diamaneos/downloads` match Settings' `DiamaneOSDownloadPolicyClient`. Reads use the public SDK without extra permissions. Settings' main-user controls use existing `WRITE_SECURE_SETTINGS`. Trusted platform writers retain device-wide control.
 
-`REPO_PUBLIC_KEY` supplies the independently approved catalog key. There is no inherited key or configurable origin. `REPO_KEY_VERSION` is bounded decimal text. Missing keys disable network and cached-catalog use. Caches bind the key and version.
+`REPO_PUBLIC_KEY` supplies the catalog key: the release key for official builds, a test key for test builds. There is no default and GrapheneOS's key is refused. `REPO_KEY_VERSION` is bounded decimal text. Missing keys disable network and cached-catalog use. Caches bind the key and version.
+
+`REPO_SERVER=staging` makes a test build send every request to `apps.staging.diamaneos.de`. Official builds use only `apps.diamaneos.de` and `apps-na.diamaneos.de`.
 
 Run `python3 -m unittest discover -s tests -p 'test_download_adapters.py'`. Host JDK/Kotlin compilers are selected through `DOWNLOAD_POLICY_JAVA_HOME` and `DOWNLOAD_POLICY_KOTLIN_HOME`. Tests use explicit Android, TLS, JSON and verifier doubles. They are not Android or cryptographic qualification. The inherited namespace is `app.grapheneos.apps`.
