@@ -49,13 +49,19 @@ android {
         versionName = "36.1"
 
         // DiamaneOS catalog key 0, exported by the offline signer. APK signing uses a separate key.
+        // A test build may supply a test key. GrapheneOS's key is refused.
         val catalogKey = System.getenv("REPO_PUBLIC_KEY")
             ?: "RWRM77BKHPPXnI2+ijuXz5phnaGpVGZuK8R6GM7uX5Wonc/5YiLsiJF3"
         val catalogVersion = System.getenv("REPO_KEY_VERSION") ?: "0"
+        // Test builds may use the staging server instead of apps.diamaneos.de and apps-na.
+        val catalogServer = System.getenv("REPO_SERVER") ?: "production"
         require(catalogKey.matches(Regex("[A-Za-z0-9+/]{56}")))
+        require(catalogKey != "RWQtZwEu1br1lMh911L3yPOs97cQb9LOks/ALBbqGl21ul695ocWR/ir")
         require(catalogVersion.matches(Regex("0|[1-9][0-9]{0,5}")))
+        require(catalogServer == "production" || catalogServer == "staging")
         buildConfigField(String::class.java.name, "REPO_PUBLIC_KEY", "\"$catalogKey\"")
         buildConfigField(String::class.java.name, "REPO_KEY_VERSION", "\"$catalogVersion\"")
+        buildConfigField("boolean", "REPO_STAGING", (catalogServer == "staging").toString())
     }
 
     buildTypes {
