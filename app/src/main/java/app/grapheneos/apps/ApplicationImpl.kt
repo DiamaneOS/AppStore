@@ -38,6 +38,7 @@ class ApplicationImpl : Application(), ActivityLifecycleCallbacks {
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
         baseAppContext = base
+        app.grapheneos.apps.util.DownloadIconLoader.register(base)
 
         PackageStates.requestRepoUpdateNoSuspend()
         PackageStates.init()

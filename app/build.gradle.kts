@@ -46,15 +46,13 @@ android {
         versionCode = 36
         versionName = versionCode.toString()
 
-        buildConfigField(String::class.java.name, "REPO_BASE_URL",
-            "\"${System.getenv("REPO_BASE_URL") ?: "https://apps.grapheneos.org"}\"")
-
-        buildConfigField(String::class.java.name, "REPO_PUBLIC_KEY", "\"${
-            System.getenv("REPO_PUBLIC_KEY") ?: "RWQtZwEu1br1lMh911L3yPOs97cQb9LOks/ALBbqGl21ul695ocWR/ir"
-        }\"")
-
-        buildConfigField(String::class.java.name, "REPO_KEY_VERSION",
-            "\"${System.getenv("REPO_KEY_VERSION") ?: "0"}\"")
+        // A release supplies its independently approved public catalog key. No inherited default.
+        val catalogKey = System.getenv("REPO_PUBLIC_KEY") ?: ""
+        val catalogVersion = System.getenv("REPO_KEY_VERSION") ?: "0"
+        require(catalogKey.isEmpty() || catalogKey.matches(Regex("[A-Za-z0-9+/]{56}")))
+        require(catalogVersion.matches(Regex("0|[1-9][0-9]{0,5}")))
+        buildConfigField(String::class.java.name, "REPO_PUBLIC_KEY", "\"$catalogKey\"")
+        buildConfigField(String::class.java.name, "REPO_KEY_VERSION", "\"$catalogVersion\"")
     }
 
     buildTypes {

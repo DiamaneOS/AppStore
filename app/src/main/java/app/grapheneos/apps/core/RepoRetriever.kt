@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.security.GeneralSecurityException
 
 private const val METADATA_VERSION = 1
-private const val CACHE_FILE_VERSION = 1
+private const val CACHE_FILE_VERSION = 2
 
 private const val MIN_TIMESTAMP = 1_770_000_000L
 private const val PUBLIC_KEY = BuildConfig.REPO_PUBLIC_KEY
@@ -28,7 +28,16 @@ private const val KEY_VERSION = BuildConfig.REPO_KEY_VERSION
 
 private val cacheFile = AtomicFile2("repo")
 
+internal fun requireCatalogConfiguration() {
+    if (PUBLIC_KEY.isEmpty() || !KEY_VERSION.matches(Regex("0|[1-9][0-9]{0,5}"))) {
+        throw GeneralSecurityException("Catalog verification key is not configured")
+    }
+    // Delegate public material parsing to the existing verifier.
+    FileVerifier(PUBLIC_KEY)
+}
+
 fun fetchRepo(currentRepo: Repo): Repo {
+    requireCatalogConfiguration()
     val url = "$REPO_BASE_URL/metadata.$METADATA_VERSION.$KEY_VERSION.sjson"
 
     return if (!currentRepo.isDummy) {
@@ -62,7 +71,9 @@ private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
     val eTag = conn.getHeaderField("ETag") ?: ""
 
     val unverifiedBytes = conn.inputStream.use {
-        it.readBytes()
+        val bytes = de.diamaneos.downloads.DownloadTransport.readBounded(it, 8 * 1024 * 1024)
+        if (bytes.size < 103) throw GeneralSecurityException("Unexpected catalog size")
+        bytes
     }
 
     // format:
@@ -89,6 +100,8 @@ private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
     val baos = ByteArrayOutputStream(verifiedJson.size + 100)
     DataOutputStream(baos).let {
         it.writeInt(CACHE_FILE_VERSION)
+        it.writeString(PUBLIC_KEY)
+        it.writeString(KEY_VERSION)
         it.writeString(eTag)
         it.writeByteArray(verifiedJson)
     }
@@ -99,11 +112,14 @@ private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
 }
 
 fun getCachedRepo(): Repo {
+    if (PUBLIC_KEY.isEmpty()) return createDummy()
+    requireCatalogConfiguration()
     val bytes = cacheFile.read() ?: return createDummy()
 
     val dis = DataInputStream(ByteArrayInputStream(bytes))
     val fileVersion = dis.readInt()
-    check(fileVersion <= CACHE_FILE_VERSION)
+    if (fileVersion != CACHE_FILE_VERSION) return createDummy()
+    if (dis.readString() != PUBLIC_KEY || dis.readString() != KEY_VERSION) return createDummy()
 
     val eTag = dis.readString()
 
