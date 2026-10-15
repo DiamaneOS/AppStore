@@ -28,6 +28,9 @@ private const val KEY_VERSION = BuildConfig.REPO_KEY_VERSION
 
 private val cacheFile = AtomicFile2("repo")
 
+// Both servers serve it, so Automatic also probes it.
+internal const val CATALOG_PATH = "metadata.$METADATA_VERSION.$KEY_VERSION.sjson"
+
 internal fun requireCatalogConfiguration() {
     if (PUBLIC_KEY.isEmpty() || !KEY_VERSION.matches(Regex("0|[1-9][0-9]{0,5}"))) {
         throw GeneralSecurityException("Catalog verification key is not configured")
@@ -38,7 +41,7 @@ internal fun requireCatalogConfiguration() {
 
 fun fetchRepo(currentRepo: Repo): Repo {
     requireCatalogConfiguration()
-    val url = "$REPO_BASE_URL/metadata.$METADATA_VERSION.$KEY_VERSION.sjson"
+    val url = "$REPO_BASE_URL/$CATALOG_PATH"
 
     return if (!currentRepo.isDummy) {
         openConnection(null, url) {
