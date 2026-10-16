@@ -37,7 +37,7 @@ internal class DownloadIconLoader : ModelLoader<GlideUrl, InputStream> {
                 connection = conn
                 if (cancelled) { conn.close(); return }
                 if (conn.v.responseCode != HTTP_OK) throwResponseCodeException(conn.v)
-                // Icons are optional; oversized objects never reach the image decoder.
+                // Icons are optional. Oversized objects never reach the image decoder.
                 val bytes = conn.v.inputStream.use {
                     de.diamaneos.downloads.DownloadTransport.readBounded(it, 1024 * 1024)
                 }
