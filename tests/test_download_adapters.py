@@ -1,4 +1,4 @@
-"""Compile isolated JVM adapters with explicit API/verifier doubles; never Android or crypto acceptance."""
+"""Compile isolated JVM adapters with API and verifier stand-ins. Does not test Android or the crypto."""
 import base64
 import os
 from pathlib import Path

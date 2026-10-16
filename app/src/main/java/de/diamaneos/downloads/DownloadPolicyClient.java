@@ -33,7 +33,7 @@ public final class DownloadPolicyClient {
         }
     }
 
-    /** Guard this client's UI/setup writes; existing privileged platform writers retain control. */
+    /** Guard this client's UI/setup writes. Existing privileged platform writers retain control. */
     public static boolean canWrite(Context context) {
         UserManager users = context.getSystemService(UserManager.class);
         return users != null && users.isSystemUser()
