@@ -48,10 +48,11 @@ android {
         versionCode = 3601
         versionName = "36.1"
 
-        // A release supplies its independently approved public catalog key. No inherited default.
-        val catalogKey = System.getenv("REPO_PUBLIC_KEY") ?: ""
+        // DiamaneOS catalog key 0, exported by the offline signer. APK signing uses a separate key.
+        val catalogKey = System.getenv("REPO_PUBLIC_KEY")
+            ?: "RWRM77BKHPPXnI2+ijuXz5phnaGpVGZuK8R6GM7uX5Wonc/5YiLsiJF3"
         val catalogVersion = System.getenv("REPO_KEY_VERSION") ?: "0"
-        require(catalogKey.isEmpty() || catalogKey.matches(Regex("[A-Za-z0-9+/]{56}")))
+        require(catalogKey.matches(Regex("[A-Za-z0-9+/]{56}")))
         require(catalogVersion.matches(Regex("0|[1-9][0-9]{0,5}")))
         buildConfigField(String::class.java.name, "REPO_PUBLIC_KEY", "\"$catalogKey\"")
         buildConfigField(String::class.java.name, "REPO_KEY_VERSION", "\"$catalogVersion\"")

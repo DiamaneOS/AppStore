@@ -30,6 +30,7 @@
     <string name="pkg_release_notes">Release notes</string>
     <string name="pkg_dependencies">Dependencies</string>
 
+    <string name="pkg_source_diamaneos">DiamaneOS</string>
     <string name="pkg_source_grapheneos">GrapheneOS</string>
     <string name="pkg_source_grapheneos_build">GrapheneOS build</string>
     <string name="pkg_source_mirror">Mirror</string>
