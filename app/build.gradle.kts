@@ -43,8 +43,10 @@ android {
         applicationId = "app.grapheneos.apps"
         minSdk = 31
         targetSdk = 36
-        versionCode = 36
-        versionName = versionCode.toString()
+        // DiamaneOS: upstream version x 100 + DiamaneOS revision (36.1 = 3601). Always higher than
+        // upstream's own numbers and only ever rising, as Android refuses a lower version as an update.
+        versionCode = 3601
+        versionName = "36.1"
 
         // A release supplies its independently approved public catalog key. No inherited default.
         val catalogKey = System.getenv("REPO_PUBLIC_KEY") ?: ""
