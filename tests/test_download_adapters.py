@@ -1,6 +1,8 @@
 """Compile isolated JVM adapters with API and verifier stand-ins. Does not test Android or the crypto."""
+import base64
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -299,7 +301,7 @@ class AdapterTests(unittest.TestCase):
             out = Path(cls.tmp.name) / variant
             out.mkdir()
             files = dict(JAVA)
-            files['app/grapheneos/apps/BuildConfig.java'] = f'package app.grapheneos.apps; public class BuildConfig {{ public static final String REPO_PUBLIC_KEY="{key}", REPO_KEY_VERSION="0"; }}'
+            files['app/grapheneos/apps/BuildConfig.java'] = f'package app.grapheneos.apps; public class BuildConfig {{ public static final String REPO_PUBLIC_KEY="{key}", REPO_KEY_VERSION="0"; public static final boolean REPO_STAGING=false; }}'
             for name, body in files.items():
                 p = out / name
                 p.parent.mkdir(parents=True, exist_ok=True)
@@ -349,14 +351,18 @@ class AdapterTests(unittest.TestCase):
     def test_icon_origin_tracks_shared_policy(self): self.scenario('icon_policy')
     def test_icon_external_origin_refused(self): self.scenario('icons')
 
-    def test_fixed_pinned_domains_and_no_catalog_key_default(self):
+    def test_fixed_pinned_domains_and_offline_catalog_key_default(self):
         doc = ET.parse(ROOT / 'app/src/main/res/xml/network_security_config.xml').getroot()
         config = doc.find('domain-config')
-        self.assertEqual({x.text for x in config.findall('domain')}, {'apps.diamaneos.de', 'apps-na.diamaneos.de'})
+        self.assertEqual({x.text for x in config.findall('domain')}, {'apps.diamaneos.de', 'apps-na.diamaneos.de', 'apps.staging.diamaneos.de'})
         self.assertTrue(config.findall('pin-set/pin'))
         gradle = (ROOT / 'app/build.gradle.kts').read_text()
         self.assertNotIn('REPO_BASE_URL', gradle)
-        self.assertIn('System.getenv("REPO_PUBLIC_KEY") ?: ""', gradle)
+        key = re.search(r'val catalogKey = System.getenv\("REPO_PUBLIC_KEY"\)\s*\?: "([^"]+)"', gradle)
+        self.assertIsNotNone(key)
+        decoded = base64.b64decode(key[1], validate=True)
+        self.assertEqual(42, len(decoded))
+        self.assertEqual(b'Ed' + bytes.fromhex('4cefb04a1cf3d79c'), decoded[:10])
         self.assertIn('applicationId = "app.grapheneos.apps"', gradle)
 
 
