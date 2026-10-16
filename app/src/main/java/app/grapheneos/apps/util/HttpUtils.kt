@@ -1,6 +1,7 @@
 package app.grapheneos.apps.util
 
 import android.net.Network
+import app.grapheneos.apps.BuildConfig
 import app.grapheneos.apps.core.CATALOG_PATH
 import app.grapheneos.apps.core.appContext
 import app.grapheneos.apps.core.requireCatalogConfiguration
@@ -10,11 +11,15 @@ import de.diamaneos.downloads.DownloadTransport
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.ProtocolException
+import java.net.URL
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.HttpsURLConnection
 import org.grapheneos.tls.ModernTLSSocketFactory
 
 private val tlsSocketFactory = ModernTLSSocketFactory()
+
+// Test builds for the staging server send every Apps request there.
+private const val STAGING_HOST = "apps.staging.diamaneos.de"
 
 private val baseConfigure = DownloadTransport.Configure { conn ->
     conn.sslSocketFactory = tlsSocketFactory
@@ -25,7 +30,8 @@ private val baseConfigure = DownloadTransport.Configure { conn ->
 fun openConnection(network: Network?, urlString: String, configure: HttpURLConnection.() -> Unit): ScopedHttpConnection {
     requireCatalogConfiguration()
     val path = DownloadPolicy.appsPath(urlString)
-    val connector = DownloadTransport.Connector { url ->
+    val connector = DownloadTransport.Connector { policyUrl ->
+        val url = if (BuildConfig.REPO_STAGING) URL("https", STAGING_HOST, policyUrl.file) else policyUrl
         (network?.openConnection(url) ?: url.openConnection()) as HttpsURLConnection
     }
     val fullConfigure = DownloadTransport.Configure { conn ->
