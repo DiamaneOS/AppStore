@@ -43,8 +43,10 @@ android {
         applicationId = "app.grapheneos.apps"
         minSdk = 31
         targetSdk = 36
-        versionCode = 36
-        versionName = versionCode.toString()
+        // DiamaneOS: upstream version x 100 + DiamaneOS revision (36.1 = 3601). Always higher than
+        // upstream's own numbers and only ever rising, as Android refuses a lower version as an update.
+        versionCode = 3602
+        versionName = "36.2"
 
         // DiamaneOS catalog key 0, exported by the offline signer. APK signing uses a separate key.
         // A test build may supply a test key. GrapheneOS's key is refused.
