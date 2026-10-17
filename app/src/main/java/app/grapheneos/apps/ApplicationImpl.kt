@@ -38,7 +38,6 @@ class ApplicationImpl : Application(), ActivityLifecycleCallbacks {
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
         baseAppContext = base
-        app.grapheneos.apps.util.DownloadIconLoader.register(base)
 
         PackageStates.requestRepoUpdateNoSuspend()
         PackageStates.init()
@@ -51,6 +50,12 @@ class ApplicationImpl : Application(), ActivityLifecycleCallbacks {
 
         DynamicColors.applyToActivitiesIfAvailable(this)
         registerActivityLifecycleCallbacks(this)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Glide needs the application context, which is set only after attachBaseContext.
+        app.grapheneos.apps.util.DownloadIconLoader.register(this)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
