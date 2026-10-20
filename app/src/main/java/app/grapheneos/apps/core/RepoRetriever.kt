@@ -18,17 +18,17 @@ import java.net.HttpURLConnection.HTTP_NOT_MODIFIED
 import java.net.HttpURLConnection.HTTP_OK
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.GeneralSecurityException
+import java.util.concurrent.CancellationException
 
 private const val METADATA_VERSION = 1
 private const val CACHE_FILE_VERSION = 2
 
-private const val MIN_TIMESTAMP = 1_770_000_000L
 private const val PUBLIC_KEY = BuildConfig.REPO_PUBLIC_KEY
 private const val KEY_VERSION = BuildConfig.REPO_KEY_VERSION
 
-private val cacheFile = AtomicFile2("repo")
+private val cacheFiles = Catalog.entries.associateWith { AtomicFile2(it.cacheName) }
 
-// Both servers serve it, so Automatic also probes it.
+// Our catalog. Both servers serve it, so Automatic also probes it.
 internal const val CATALOG_PATH = "metadata.$METADATA_VERSION.$KEY_VERSION.sjson"
 
 internal fun requireCatalogConfiguration() {
@@ -39,22 +39,54 @@ internal fun requireCatalogConfiguration() {
     FileVerifier(PUBLIC_KEY)
 }
 
+// Each catalog is fetched, verified with its own key and parsed on its own. A failing catalog keeps
+// its previous part and never stops the other's update.
 fun fetchRepo(currentRepo: Repo): Repo {
     requireCatalogConfiguration()
-    val url = "$REPO_BASE_URL/$CATALOG_PATH"
+    val previous = currentRepo.parts
+    var failure: Exception? = null
+    val failed = mutableSetOf<Int>()
+    val fetched = previous.mapIndexed { i, part ->
+        try {
+            fetchCatalog(part)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (failure == null) failure = e
+            failed += i
+            part
+        }
+    }
+    val built = if (fetched.indices.all { fetched[it] === previous[it] }) {
+        RepoParts(currentRepo, emptySet(), null)
+    } else {
+        buildRepo(fetched, previous)
+    }
+    failed += built.failed
+    if (failure == null) failure = built.failure
+    val parts = built.repo.parts
+    val repo = if (parts.indices.all { parts[it] === previous[it] }) currentRepo else built.repo
+    // Caches only take parts that parsed together with the other catalog.
+    parts.forEachIndexed { i, part ->
+        if (part !== previous[i]) part.cacheBytes?.let { cacheFiles[part.catalog]!!.write(it) }
+    }
+    failure?.let { throw if (failed.size < parts.size) PartialRepoUpdate(repo, it) else it }
+    return repo
+}
 
-    return if (!currentRepo.isDummy) {
+private fun fetchCatalog(part: CatalogPart): CatalogPart {
+    val url = "$REPO_BASE_URL/${part.catalog.path}"
+
+    return if (!part.isDummy) {
         openConnection(null, url) {
-            setRequestProperty("If-None-Match", currentRepo.eTag)
+            setRequestProperty("If-None-Match", part.eTag)
         }.use { conn ->
             when (conn.v.responseCode) {
                 HTTP_OK -> {
-                    fetchInner(conn.v,
-                        // in case MIN_TIMESTAMP was updated
-                        maxOf(currentRepo.timestamp, MIN_TIMESTAMP))
+                    fetchInner(conn.v, part)
                 }
                 HTTP_NOT_MODIFIED -> {
-                    currentRepo
+                    part
                 }
                 else -> throwResponseCodeException(conn.v)
             }
@@ -65,12 +97,13 @@ fun fetchRepo(currentRepo: Repo): Repo {
                 throwResponseCodeException(conn.v)
             }
 
-            fetchInner(conn.v, MIN_TIMESTAMP)
+            fetchInner(conn.v, part)
         }
     }
 }
 
-private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
+private fun fetchInner(conn: HttpURLConnection, current: CatalogPart): CatalogPart {
+    val catalog = current.catalog
     val eTag = conn.getHeaderField("ETag") ?: ""
 
     val unverifiedBytes = conn.inputStream.use {
@@ -90,53 +123,76 @@ private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
         unverifiedBytes.copyOfRange(unverifiedBytes.size - 101, unverifiedBytes.size - 1)
             .toString(UTF_8)
 
-    FileVerifier(PUBLIC_KEY).verifySignature(unverifiedJson, signature)
+    FileVerifier(catalog.publicKey).verifySignature(unverifiedJson, signature)
 
     val verifiedJson = unverifiedJson
 
-    val repo = Repo(JSONObject(verifiedJson.toString(UTF_8)), eTag)
+    val json = JSONObject(verifiedJson.toString(UTF_8))
+    val timestamp = json.getLong("time")
 
-    if (repo.timestamp < minTimestamp) {
+    // A valid but older copy, for example on the other server, counts as not modified.
+    if (!current.isDummy && timestamp < current.timestamp) {
+        return current
+    }
+    // Without a catalog, the floor is the catalog's or the time of a cache that could not be parsed.
+    if (timestamp < maxOf(catalog.minTimestamp, current.timestamp)) {
         throw GeneralSecurityException("repo downgrade")
     }
 
     val baos = ByteArrayOutputStream(verifiedJson.size + 100)
     DataOutputStream(baos).let {
         it.writeInt(CACHE_FILE_VERSION)
-        it.writeString(PUBLIC_KEY)
-        it.writeString(KEY_VERSION)
+        it.writeString(catalog.publicKey)
+        it.writeString(catalog.keyVersion)
         it.writeString(eTag)
         it.writeByteArray(verifiedJson)
     }
 
-    cacheFile.write(baos.toByteArray())
-
-    return repo
+    return CatalogPart(catalog, json, eTag, cacheBytes = baos.toByteArray())
 }
 
 fun getCachedRepo(): Repo {
-    if (PUBLIC_KEY.isEmpty()) return createDummy()
+    val dummies = Catalog.entries.map { createDummy(it) }
+    if (PUBLIC_KEY.isEmpty()) return Repo(dummies)
     requireCatalogConfiguration()
-    val bytes = cacheFile.read() ?: return createDummy()
+    // A cache this App Store cannot read starts that catalog afresh. If its time can be read, it
+    // stays the floor for that catalog.
+    val parts = Catalog.entries.map { catalog ->
+        try {
+            getCachedCatalog(catalog)
+        } catch (e: Exception) {
+            createDummy(catalog)
+        }
+    }
+    val floors = parts.mapIndexed { i, part ->
+        if (part.isDummy) dummies[i] else createDummy(part.catalog, maxOf(part.catalog.minTimestamp, part.timestamp))
+    }
+    return buildRepo(parts, floors).repo
+}
+
+private fun getCachedCatalog(catalog: Catalog): CatalogPart {
+    val bytes = cacheFiles[catalog]!!.read() ?: return createDummy(catalog)
 
     val dis = DataInputStream(ByteArrayInputStream(bytes))
     val fileVersion = dis.readInt()
-    if (fileVersion != CACHE_FILE_VERSION) return createDummy()
-    if (dis.readString() != PUBLIC_KEY || dis.readString() != KEY_VERSION) return createDummy()
+    if (fileVersion != CACHE_FILE_VERSION) return createDummy(catalog)
+    if (dis.readString() != catalog.publicKey || dis.readString() != catalog.keyVersion) {
+        return createDummy(catalog)
+    }
 
     val eTag = dis.readString()
 
     val json = dis.readByteArray().toString(UTF_8)
     check(dis.available() == 0)
 
-    return Repo(JSONObject(json), eTag)
+    return CatalogPart(catalog, JSONObject(json), eTag)
 }
 
-// make a dummy repo to remove the need to check for null Repo everywhere
-private fun createDummy(): Repo {
+// make a dummy catalog to remove the need to check for null everywhere
+private fun createDummy(catalog: Catalog, time: Long = catalog.minTimestamp): CatalogPart {
     val jo = JSONObject().apply {
-        put("time", MIN_TIMESTAMP)
+        put("time", time)
         put("packages", JSONObject())
     }
-    return Repo(jo, eTag = "", isDummy = true)
+    return CatalogPart(catalog, jo, eTag = "", isDummy = true)
 }

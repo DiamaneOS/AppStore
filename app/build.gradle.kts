@@ -49,7 +49,8 @@ android {
         versionName = "36.2"
 
         // DiamaneOS catalog key 0, exported by the offline signer. APK signing uses a separate key.
-        // A test build may supply a test key. GrapheneOS's key is refused.
+        // A test build may supply a test key. GrapheneOS's key signs only GrapheneOS's catalog
+        // (core/Catalogs.kt), so it is refused here.
         val catalogKey = System.getenv("REPO_PUBLIC_KEY")
             ?: "RWRM77BKHPPXnI2+ijuXz5phnaGpVGZuK8R6GM7uX5Wonc/5YiLsiJF3"
         val catalogVersion = System.getenv("REPO_KEY_VERSION") ?: "0"

@@ -75,7 +75,7 @@ class RpcProvider : ContentProvider() {
         val repoUpdateError = PackageStates.requestRepoUpdateRetrying()
         val pkg = pkgState.rPackage
 
-        if (repoUpdateError != null) {
+        if (repoUpdateError != null && !repoUpdateError.partial) {
             Log.d(TAG, "unable to update repo", repoUpdateError.throwable)
             return false;
         }

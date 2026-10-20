@@ -154,7 +154,7 @@ class InstallTask(
                 }
 
                 if (rPackage.common.hasFsvSigSignatures) {
-                    val certId = rPackage.common.repo.fsVerityCertificateId
+                    val certId = rPackage.common.repo.fsVerityCertificateId(rPackage.common.catalog)
                     if (certId != null) {
                         apks.forEach { apk ->
                             launch {
@@ -331,7 +331,7 @@ class InstallTask(
             val downloadProgress = AtomicLong()
 
             httpDownloadSemaphore.withPermit {
-                val url = "$REPO_BASE_URL/packages/${rPackage.manifestPackageName}/${rPackage.versionCode}/$downloadName"
+                val url = "$REPO_BASE_URL/${rPackage.common.catalog.prefix}packages/${rPackage.manifestPackageName}/${rPackage.versionCode}/$downloadName"
 
                 openConnection(params.network, url) {
                     if (disableCompression) {

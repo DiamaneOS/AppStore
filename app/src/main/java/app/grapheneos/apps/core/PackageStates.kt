@@ -38,6 +38,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import app.grapheneos.apps.core.PackageState
+import app.grapheneos.apps.core.PartialRepoUpdate
 import app.grapheneos.apps.core.RPackageContainer
 import app.grapheneos.apps.core.ReleaseChannel
 import app.grapheneos.apps.core.Repo
@@ -184,11 +185,12 @@ object PackageStates : LifecycleEventObserver {
     }
 
     suspend fun requestRepoUpdateRetrying(force: Boolean = false, isManuallyRequested: Boolean = false): RepoUpdateError? {
-        val (_, err) = retry(binaryExponentialBackoff(1_000, 30_000)) {
+        // DiamaneOS: a partial update is not retried, the current catalog's packages can update.
+        val (partial, err) = retry(binaryExponentialBackoff(1_000, 30_000)) {
             val err = requestRepoUpdate(force, isManuallyRequested)
-            if (err != null) Err(err) else Ok(Unit)
+            if (err != null && !err.partial) Err(err) else Ok(err)
         }
-        return err
+        return err ?: partial
     }
 
     suspend fun requestRepoUpdate(force: Boolean = false, isManuallyRequested: Boolean = false): RepoUpdateError? {
@@ -216,8 +218,10 @@ object PackageStates : LifecycleEventObserver {
                     throw t
                 }
                 Log.w(TAG, "unable to fetch repo", t)
-                result = RepoUpdateError(t, isManuallyRequested)
-                null
+                // DiamaneOS: one catalog failed, the other is current. Use it and report the failure.
+                val partial = t as? PartialRepoUpdate
+                result = RepoUpdateError(partial?.cause ?: t, isManuallyRequested, partial != null)
+                partial?.repo
             }
 
             val job = this.coroutineContext[Job]
@@ -228,7 +232,9 @@ object PackageStates : LifecycleEventObserver {
                 repoUpdateJob = null
                 lastRepoUpdateResult = result
                 if (repo != null) {
-                    lastSuccessfulRepoUpdateCheck = SystemClock.elapsedRealtime()
+                    if (result == null) {
+                        lastSuccessfulRepoUpdateCheck = SystemClock.elapsedRealtime()
+                    }
                     if (repo !== currentRepo) {
                         updateRepo(repo)
                     }
