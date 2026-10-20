@@ -10,7 +10,9 @@ Redirects and TLS failures are refused and never move to the other server. Signa
 
 Sources in `app/src/main/java/de/diamaneos/downloads` match Settings' `DiamaneOSDownloadPolicyClient`. Reads use the public SDK without extra permissions. Settings' main-user controls use existing `WRITE_SECURE_SETTINGS`. Trusted platform writers retain device-wide control.
 
-`REPO_PUBLIC_KEY` overrides the catalog key, for example with a test key for test builds. The default is DiamaneOS catalog key 0, and GrapheneOS's key is refused. `REPO_KEY_VERSION` is bounded decimal text. Missing keys disable network and cached-catalog use. Caches bind the key and version.
+Apps trusts two signed catalogs. Our catalog (`metadata.1.0.sjson`) may list only our App Store, Camera and Auditor. GrapheneOS's catalog, served unchanged under `grapheneos/`, is checked with GrapheneOS's key and may list only GrapheneOS's other packages, without its Info and Auditor apps (`core/Catalogs.kt`). Each catalog has its own downgrade check and cache. A failure of one keeps the other's update.
+
+`REPO_PUBLIC_KEY` overrides our catalog key, for example with a test key for test builds. The default is DiamaneOS catalog key 0, and GrapheneOS's key is refused for our catalog. `REPO_KEY_VERSION` is bounded decimal text. Missing keys disable network and cached-catalog use. Caches bind the key and version.
 
 `REPO_SERVER=staging` makes a test build send every request to `apps.staging.diamaneos.de`. Official builds use only `apps.diamaneos.de` and `apps-na.diamaneos.de`.
 

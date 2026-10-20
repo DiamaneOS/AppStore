@@ -38,6 +38,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import app.grapheneos.apps.core.PackageState
+import app.grapheneos.apps.core.PartialRepoUpdate
 import app.grapheneos.apps.core.RPackageContainer
 import app.grapheneos.apps.core.ReleaseChannel
 import app.grapheneos.apps.core.Repo
@@ -216,8 +217,10 @@ object PackageStates : LifecycleEventObserver {
                     throw t
                 }
                 Log.w(TAG, "unable to fetch repo", t)
-                result = RepoUpdateError(t, isManuallyRequested)
-                null
+                // DiamaneOS: one catalog updated, the other failed. Use the update, report the failure.
+                val partial = t as? PartialRepoUpdate
+                result = RepoUpdateError(partial?.cause ?: t, isManuallyRequested)
+                partial?.repo
             }
 
             val job = this.coroutineContext[Job]
@@ -228,7 +231,9 @@ object PackageStates : LifecycleEventObserver {
                 repoUpdateJob = null
                 lastRepoUpdateResult = result
                 if (repo != null) {
-                    lastSuccessfulRepoUpdateCheck = SystemClock.elapsedRealtime()
+                    if (result == null) {
+                        lastSuccessfulRepoUpdateCheck = SystemClock.elapsedRealtime()
+                    }
                     if (repo !== currentRepo) {
                         updateRepo(repo)
                     }

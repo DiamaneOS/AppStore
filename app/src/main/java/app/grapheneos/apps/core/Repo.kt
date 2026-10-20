@@ -38,8 +38,9 @@ val REPO_BASE_URL: String
     get() = de.diamaneos.downloads.DownloadPolicyClient.read(appContext)
         .url(true, CATALOG_PATH).let { "https://${it.host}" }
 
-class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
-    val timestamp = json.getLong("time")
+// DiamaneOS: the packages of both catalogs (Catalogs.kt), each limited to the packages it may list.
+class Repo(val parts: List<CatalogPart>) {
+    val isDummy = parts.all { it.isDummy }
 
     val groups = mutableMapOf<String, RPackageGroup>()
     private val renamedPackages = ArrayMap<String, String>()
@@ -47,13 +48,18 @@ class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
     fun translateManifestPackageName(name: String) = renamedPackages[name] ?: name
 
     val packages: HashMap<String, RPackageContainer> = run {
-        val packagesJson = json.getJSONObject("packages")
-        val map = HashMap<String, RPackageContainer>(packagesJson.length())
+        val listed = parts.flatMap { part ->
+            val packagesJson = part.json.getJSONObject("packages")
+            packagesJson.keys().asSequence().map { Triple(part.catalog, it, packagesJson.getJSONObject(it)) }
+                .filter { (catalog, name, json) ->
+                    catalog.lists(name, json.opt("originalPackage") as String?, json.opt("source") as String?)
+                }.toList()
+        }
+        val map = HashMap<String, RPackageContainer>(listed.size)
 
         // Collect packages renamed via original-package system. Applicable only to preinstalled apps.
-        for (manifestPackageName in packagesJson.keys()) {
-            val originalPackage = packagesJson.getJSONObject(manifestPackageName)
-                .opt("originalPackage") as String?
+        for ((_, manifestPackageName, packageContainerJson) in listed) {
+            val originalPackage = packageContainerJson.opt("originalPackage") as String?
 
             if (originalPackage != null) {
                 pkgManager.getPackageInfoOrNull(originalPackage)?.let {
@@ -71,9 +77,7 @@ class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
             }
         }
 
-        for (manifestPackageName in packagesJson.keys()) {
-            val packageContainerJson = packagesJson.getJSONObject(manifestPackageName)
-
+        for ((catalog, manifestPackageName, packageContainerJson) in listed) {
             if (!checkStaticDeps(packageContainerJson, manifestPackageName, this)) {
                 continue
             }
@@ -86,7 +90,7 @@ class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
                 continue
             }
 
-            val res = RPackageContainer(this@Repo, packageName, manifestPackageName, packageContainerJson)
+            val res = RPackageContainer(this@Repo, catalog, packageName, manifestPackageName, packageContainerJson)
             if (res.variants.isNotEmpty()) {
                 map.put(packageName, res)
             }
@@ -95,7 +99,11 @@ class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) {
         map
     }
 
-    val fsVerityCertificateId: Int? = run {
+    fun fsVerityCertificateId(catalog: Catalog): Int? = fsVerityCertificateIds[catalog]
+
+    private val fsVerityCertificateIds = parts.associate { it.catalog to trustedFsVerityCertificate(it.json) }
+
+    private fun trustedFsVerityCertificate(json: JSONObject): Int? = run {
         if (Build.VERSION.SDK_INT >= 35) {
             // fs-verity certificates are not used by the OS since SDK 35
             return@run null
@@ -156,7 +164,7 @@ class RPackageGroup(val name: String) {
 
 // Contains properties that are common to variants of the package, and the list of variants.
 // Some of the common properties can be overridden in its variants
-class RPackageContainer(val repo: Repo, val packageName: String,
+class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: String,
                         // different from packageName if renamed via the original-package system
                         val manifestPackageName: String,
                         json: JSONObject)
@@ -195,7 +203,7 @@ class RPackageContainer(val repo: Repo, val packageName: String,
     private val iconType = json.opt("iconType") as String?
     val iconUrl: String? get() = try {
         if (iconType != null) {
-            "$REPO_BASE_URL/packages/$manifestPackageName/icon.$iconType"
+            "$REPO_BASE_URL/${catalog.prefix}packages/$manifestPackageName/icon.$iconType"
         } else {
             null
         }
@@ -208,7 +216,8 @@ class RPackageContainer(val repo: Repo, val packageName: String,
     // channel could be changed for each of them independently)
     val group: RPackageGroup? = run {
         val groupName = json.opt("group") as String? ?: return@run null
-        val group = repo.groups.getOrPut(groupName) {
+        // A catalog's groups hold only its own packages.
+        val group = repo.groups.getOrPut("${catalog.name}/$groupName") {
             RPackageGroup(groupName)
         }
         group.packages.add(this)
@@ -505,7 +514,7 @@ class Apk(
         }
     }
 
-    fun downloadUrl() = "$REPO_BASE_URL/packages/${pkg.manifestPackageName}/${pkg.versionCode}/$name.gz"
+    fun downloadUrl() = "$REPO_BASE_URL/${pkg.common.catalog.prefix}packages/${pkg.manifestPackageName}/${pkg.versionCode}/$name.gz"
 
     enum class Type {
         UNCONDITIONAL,

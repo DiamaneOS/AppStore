@@ -18,6 +18,7 @@ import java.net.HttpURLConnection.HTTP_NOT_MODIFIED
 import java.net.HttpURLConnection.HTTP_OK
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.GeneralSecurityException
+import java.util.concurrent.CancellationException
 
 private const val METADATA_VERSION = 1
 private const val CACHE_FILE_VERSION = 2
@@ -26,9 +27,9 @@ private const val MIN_TIMESTAMP = 1_770_000_000L
 private const val PUBLIC_KEY = BuildConfig.REPO_PUBLIC_KEY
 private const val KEY_VERSION = BuildConfig.REPO_KEY_VERSION
 
-private val cacheFile = AtomicFile2("repo")
+private val cacheFiles = Catalog.entries.associateWith { AtomicFile2(it.cacheName) }
 
-// Both servers serve it, so Automatic also probes it.
+// Our catalog. Both servers serve it, so Automatic also probes it.
 internal const val CATALOG_PATH = "metadata.$METADATA_VERSION.$KEY_VERSION.sjson"
 
 internal fun requireCatalogConfiguration() {
@@ -39,22 +40,44 @@ internal fun requireCatalogConfiguration() {
     FileVerifier(PUBLIC_KEY)
 }
 
+// Each catalog is fetched and verified with its own key. A failure of one keeps the other's update.
 fun fetchRepo(currentRepo: Repo): Repo {
     requireCatalogConfiguration()
-    val url = "$REPO_BASE_URL/$CATALOG_PATH"
+    var failure: Exception? = null
+    val parts = currentRepo.parts.map { part ->
+        try {
+            fetchCatalog(part)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (failure == null) failure = e
+            part
+        }
+    }
+    if (parts.indices.all { parts[it] === currentRepo.parts[it] }) {
+        failure?.let { throw it }
+        return currentRepo
+    }
+    val repo = Repo(parts)
+    failure?.let { throw PartialRepoUpdate(repo, it) }
+    return repo
+}
 
-    return if (!currentRepo.isDummy) {
+private fun fetchCatalog(part: CatalogPart): CatalogPart {
+    val url = "$REPO_BASE_URL/${part.catalog.path}"
+
+    return if (!part.isDummy) {
         openConnection(null, url) {
-            setRequestProperty("If-None-Match", currentRepo.eTag)
+            setRequestProperty("If-None-Match", part.eTag)
         }.use { conn ->
             when (conn.v.responseCode) {
                 HTTP_OK -> {
-                    fetchInner(conn.v,
+                    fetchInner(conn.v, part.catalog,
                         // in case MIN_TIMESTAMP was updated
-                        maxOf(currentRepo.timestamp, MIN_TIMESTAMP))
+                        maxOf(part.timestamp, MIN_TIMESTAMP))
                 }
                 HTTP_NOT_MODIFIED -> {
-                    currentRepo
+                    part
                 }
                 else -> throwResponseCodeException(conn.v)
             }
@@ -65,12 +88,12 @@ fun fetchRepo(currentRepo: Repo): Repo {
                 throwResponseCodeException(conn.v)
             }
 
-            fetchInner(conn.v, MIN_TIMESTAMP)
+            fetchInner(conn.v, part.catalog, MIN_TIMESTAMP)
         }
     }
 }
 
-private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
+private fun fetchInner(conn: HttpURLConnection, catalog: Catalog, minTimestamp: Long): CatalogPart {
     val eTag = conn.getHeaderField("ETag") ?: ""
 
     val unverifiedBytes = conn.inputStream.use {
@@ -90,53 +113,59 @@ private fun fetchInner(conn: HttpURLConnection, minTimestamp: Long): Repo {
         unverifiedBytes.copyOfRange(unverifiedBytes.size - 101, unverifiedBytes.size - 1)
             .toString(UTF_8)
 
-    FileVerifier(PUBLIC_KEY).verifySignature(unverifiedJson, signature)
+    FileVerifier(catalog.publicKey).verifySignature(unverifiedJson, signature)
 
     val verifiedJson = unverifiedJson
 
-    val repo = Repo(JSONObject(verifiedJson.toString(UTF_8)), eTag)
+    val part = CatalogPart(catalog, JSONObject(verifiedJson.toString(UTF_8)), eTag)
 
-    if (repo.timestamp < minTimestamp) {
+    if (part.timestamp < minTimestamp) {
         throw GeneralSecurityException("repo downgrade")
     }
 
     val baos = ByteArrayOutputStream(verifiedJson.size + 100)
     DataOutputStream(baos).let {
         it.writeInt(CACHE_FILE_VERSION)
-        it.writeString(PUBLIC_KEY)
-        it.writeString(KEY_VERSION)
+        it.writeString(catalog.publicKey)
+        it.writeString(catalog.keyVersion)
         it.writeString(eTag)
         it.writeByteArray(verifiedJson)
     }
 
-    cacheFile.write(baos.toByteArray())
+    cacheFiles[catalog]!!.write(baos.toByteArray())
 
-    return repo
+    return part
 }
 
 fun getCachedRepo(): Repo {
-    if (PUBLIC_KEY.isEmpty()) return createDummy()
+    if (PUBLIC_KEY.isEmpty()) return Repo(Catalog.entries.map { createDummy(it) })
     requireCatalogConfiguration()
-    val bytes = cacheFile.read() ?: return createDummy()
+    return Repo(Catalog.entries.map { getCachedCatalog(it) })
+}
+
+private fun getCachedCatalog(catalog: Catalog): CatalogPart {
+    val bytes = cacheFiles[catalog]!!.read() ?: return createDummy(catalog)
 
     val dis = DataInputStream(ByteArrayInputStream(bytes))
     val fileVersion = dis.readInt()
-    if (fileVersion != CACHE_FILE_VERSION) return createDummy()
-    if (dis.readString() != PUBLIC_KEY || dis.readString() != KEY_VERSION) return createDummy()
+    if (fileVersion != CACHE_FILE_VERSION) return createDummy(catalog)
+    if (dis.readString() != catalog.publicKey || dis.readString() != catalog.keyVersion) {
+        return createDummy(catalog)
+    }
 
     val eTag = dis.readString()
 
     val json = dis.readByteArray().toString(UTF_8)
     check(dis.available() == 0)
 
-    return Repo(JSONObject(json), eTag)
+    return CatalogPart(catalog, JSONObject(json), eTag)
 }
 
-// make a dummy repo to remove the need to check for null Repo everywhere
-private fun createDummy(): Repo {
+// make a dummy catalog to remove the need to check for null everywhere
+private fun createDummy(catalog: Catalog): CatalogPart {
     val jo = JSONObject().apply {
         put("time", MIN_TIMESTAMP)
         put("packages", JSONObject())
     }
-    return Repo(jo, eTag = "", isDummy = true)
+    return CatalogPart(catalog, jo, eTag = "", isDummy = true)
 }
