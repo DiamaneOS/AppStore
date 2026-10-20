@@ -134,7 +134,8 @@ private fun fetchInner(conn: HttpURLConnection, current: CatalogPart): CatalogPa
     if (!current.isDummy && timestamp < current.timestamp) {
         return current
     }
-    if (timestamp < catalog.minTimestamp) {
+    // Without a catalog, the floor is the catalog's or the time of a cache that could not be parsed.
+    if (timestamp < maxOf(catalog.minTimestamp, current.timestamp)) {
         throw GeneralSecurityException("repo downgrade")
     }
 
@@ -154,7 +155,8 @@ fun getCachedRepo(): Repo {
     val dummies = Catalog.entries.map { createDummy(it) }
     if (PUBLIC_KEY.isEmpty()) return Repo(dummies)
     requireCatalogConfiguration()
-    // A cache this App Store cannot read starts that catalog afresh.
+    // A cache this App Store cannot read starts that catalog afresh. If its time can be read, it
+    // stays the floor for that catalog.
     val parts = Catalog.entries.map { catalog ->
         try {
             getCachedCatalog(catalog)
@@ -162,7 +164,10 @@ fun getCachedRepo(): Repo {
             createDummy(catalog)
         }
     }
-    return buildRepo(parts, dummies).repo
+    val floors = parts.mapIndexed { i, part ->
+        if (part.isDummy) dummies[i] else createDummy(part.catalog, maxOf(part.catalog.minTimestamp, part.timestamp))
+    }
+    return buildRepo(parts, floors).repo
 }
 
 private fun getCachedCatalog(catalog: Catalog): CatalogPart {
@@ -184,9 +189,9 @@ private fun getCachedCatalog(catalog: Catalog): CatalogPart {
 }
 
 // make a dummy catalog to remove the need to check for null everywhere
-private fun createDummy(catalog: Catalog): CatalogPart {
+private fun createDummy(catalog: Catalog, time: Long = catalog.minTimestamp): CatalogPart {
     val jo = JSONObject().apply {
-        put("time", catalog.minTimestamp)
+        put("time", time)
         put("packages", JSONObject())
     }
     return CatalogPart(catalog, jo, eTag = "", isDummy = true)

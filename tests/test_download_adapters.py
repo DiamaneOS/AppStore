@@ -283,9 +283,18 @@ fun main(args: Array<String>) {
             AtomicFile2.files["repo-grapheneos"] = data.toByteArray()
             val cached = getCachedRepo()
             check(!cached.parts[0].isDummy && cached.parts[1].isDummy)
-            // So does a truncated one.
+            // Its time stays the floor: an older GrapheneOS catalog is refused, ours still updates.
+            check(cached.parts[1].timestamp == 1800000000L)
+            JSONObject.nextTime = 1799999000L
+            try { fetchRepo(cached);error("Expected a partial update") }
+            catch (e: PartialRepoUpdate) {
+                check(e.cause is java.security.GeneralSecurityException)
+                check(e.repo.parts[1].isDummy && e.repo.parts[1].timestamp == 1800000000L)
+            }
+            JSONObject.nextTime = 1800000000L
+            // So does a truncated one, with the catalog's own floor.
             AtomicFile2.files["repo-grapheneos"] = data.toByteArray().copyOf(6)
-            check(getCachedRepo().parts[1].isDummy)
+            check(getCachedRepo().parts[1].isDummy && getCachedRepo().parts[1].timestamp == Catalog.GrapheneOS.minTimestamp)
         }
         "older_copy" -> {
             // An older signed copy, for example on the other server, counts as not modified.
