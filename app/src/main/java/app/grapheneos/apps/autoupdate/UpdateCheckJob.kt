@@ -42,7 +42,7 @@ class UpdateCheckJob : JobService() {
 
         job = CoroutineScope(Dispatchers.Main).launch {
             val repoUpdateError = PackageStates.requestRepoUpdateRetrying()
-            if (repoUpdateError != null) {
+            if (repoUpdateError != null && !repoUpdateError.partial) {
                 showUpdateCheckFailedNotification(repoUpdateError)
             } else {
                 val outdatedPackageGroups = collectOutdatedPackageGroups()

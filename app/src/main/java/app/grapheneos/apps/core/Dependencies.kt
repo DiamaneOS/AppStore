@@ -14,7 +14,8 @@ import app.grapheneos.apps.util.getSharedLibraries
 import app.grapheneos.apps.util.hasSystemFeature
 import kotlin.jvm.Throws
 
-class Dependency(string: String, repo: Repo) {
+// DiamaneOS: catalog is the dependant's catalog, which names the version.
+class Dependency(string: String, repo: Repo, val catalog: Catalog) {
     val packageName: String
     // intentionally not supporting more complex version constraints, they are not needed in practice
     val minVersion: Long
@@ -106,7 +107,7 @@ private fun collectDependencies(dependant: String, dependencies: Array<Dependenc
         }
 
         val matchingVariants = container.variants.filter {
-            it.versionCode >= dep.minVersion
+            dep.catalog.dependencyVersion(container.packageName, it.versionCode) >= dep.minVersion
         }
 
         if (matchingVariants.isEmpty()) {

@@ -78,7 +78,7 @@ class Repo(val parts: List<CatalogPart>) {
         }
 
         for ((catalog, manifestPackageName, packageContainerJson) in listed) {
-            if (!checkStaticDeps(packageContainerJson, manifestPackageName, this)) {
+            if (!checkStaticDeps(packageContainerJson, manifestPackageName, this, catalog)) {
                 continue
             }
 
@@ -224,7 +224,7 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
         group
     }
 
-    val dependencies: Array<Dependency>? = parseDependencies(json, repo)
+    val dependencies: Array<Dependency>? = parseDependencies(json, repo, catalog)
 
     val variants: List<RPackage> = json.getJSONObject("variants").let { variantJson ->
         val pkgs = arrayOfNulls<RPackage>(ReleaseChannel.entries.size)
@@ -251,7 +251,7 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
                 }
             }
 
-            if (!checkStaticDeps(jo, manifestPackageName, repo)) {
+            if (!checkStaticDeps(jo, manifestPackageName, repo, catalog)) {
                 continue
             }
 
@@ -306,10 +306,10 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
 
 private val emptyDependencyArray = emptyArray<Dependency>()
 
-private fun parseDependencies(json: JSONObject, repo: Repo): Array<Dependency>? {
+private fun parseDependencies(json: JSONObject, repo: Repo, catalog: Catalog): Array<Dependency>? {
     val arr: JSONArray? = json.optJSONArray("deps2") ?: json.optJSONArray("deps")
     return if (arr != null) {
-        arr.asStringList().map { Dependency(it, repo) }.toTypedArray()
+        arr.asStringList().map { Dependency(it, repo, catalog) }.toTypedArray()
     } else {
         null
     }
@@ -328,7 +328,7 @@ class RPackage(val common: RPackageContainer, val versionCode: Long, val abis: A
     val description = json.opt("description") as String? ?: common.description
     val releaseNotes = json.opt("releaseNotes") as String?
 
-    val dependencies: Array<Dependency> = parseDependencies(json, repo) ?: common.dependencies ?: emptyDependencyArray
+    val dependencies: Array<Dependency> = parseDependencies(json, repo, common.catalog) ?: common.dependencies ?: emptyDependencyArray
 
     val releaseChannel = ReleaseChannel.valueOf(json.optString("channel", ReleaseChannel.stable.name))
 
@@ -567,7 +567,7 @@ private class ComplexDependency(string: String) {
     }
 }
 
-private fun checkStaticDeps(json: JSONObject, dependentManifestPkgName: String, repo: Repo): Boolean {
+private fun checkStaticDeps(json: JSONObject, dependentManifestPkgName: String, repo: Repo, catalog: Catalog): Boolean {
     json.optJSONArray("supportedDevices")?.asStringList()?.let { devices ->
         if (!devices.contains(Build.DEVICE)) {
             return false
@@ -586,7 +586,7 @@ private fun checkStaticDeps(json: JSONObject, dependentManifestPkgName: String, 
             // there's currently no certificate checks for static dependencies, require them to
             // be a system package instead, unless it's our own package
             val enforceSystemPkg = dep.lhs != selfPkgName
-            if (!checkPackageDep(dep, dependentManifestPkgName, repo, enforceSystemPkg)) {
+            if (!checkPackageDep(dep, dependentManifestPkgName, repo, catalog, enforceSystemPkg)) {
                 return false
             }
         }
@@ -601,7 +601,7 @@ private fun checkSystemFeatureDep(dep: ComplexDependency): Boolean {
 }
 
 private fun checkPackageDep(dep: ComplexDependency, dependentManifestPkgName: String,
-                            repo: Repo, enforceSystemPkg: Boolean = false): Boolean {
+                            repo: Repo, catalog: Catalog, enforceSystemPkg: Boolean = false): Boolean {
     val manifestPackageName = dep.lhs
     val packageName = repo.translateManifestPackageName(manifestPackageName)
     val pi = pkgManager.getPackageInfoOrNull(packageName) ?: return false
@@ -614,7 +614,7 @@ private fun checkPackageDep(dep: ComplexDependency, dependentManifestPkgName: St
             return false
         }
     }
-    return dep.check(pi.longVersionCode)
+    return dep.check(catalog.dependencyVersion(packageName, pi.longVersionCode))
 }
 
 private fun hexStringToByteArray(s: String): ByteArray {
