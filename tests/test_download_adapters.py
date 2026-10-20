@@ -30,8 +30,9 @@ JAVA = {
         public java.net.Socket createSocket(java.net.InetAddress h,int p){throw new UnsupportedOperationException();}
         public java.net.Socket createSocket(java.net.InetAddress h,int p,java.net.InetAddress a,int l){throw new UnsupportedOperationException();} }''',
     'org/json/JSONObject.java': '''package org.json; public class JSONObject {
-        public static long nextTime=1770000001L; public static int parsed=0; public long time=nextTime;
-        public JSONObject(){} public JSONObject(String s){parsed++;}
+        public static long nextTime=1800000000L; public static int parsed=0; public long time=nextTime; public boolean bad;
+        public JSONObject(){} public JSONObject(String s){parsed++;bad=s.contains("unparsable");}
+        public long getLong(String k){if(!k.equals("time"))throw new AssertionError();return time;}
         public Object opt(String k){return "png";} public JSONObject put(String k,Object v){if(k.equals("time"))time=((Number)v).longValue();return this;} }''',
     'com/bumptech/glide/Priority.java': 'package com.bumptech.glide; public enum Priority { NORMAL }',
     'com/bumptech/glide/load/DataSource.java': 'package com.bumptech.glide.load; public enum DataSource { REMOTE }',
@@ -58,22 +59,27 @@ import org.json.JSONObject
 import java.security.GeneralSecurityException
 val appContext = Context()
 const val REPO_BASE_URL = "https://apps.diamaneos.de"
-class Repo(json: JSONObject, val eTag: String, val isDummy: Boolean = false) { val timestamp = json.time }
-// Explicit verifier double: verifies call ordering and failure propagation, never cryptography.
-class FileVerifier(key: String) {
+// Stands in for the full parse: a part marked unparsable makes it throw, as an unknown source would.
+class Repo(val parts: List<CatalogPart>) {
+    val isDummy = parts.all { it.isDummy }
+    init { if (parts.any { it.json.bad }) throw IllegalArgumentException("fixture catalog this App Store cannot parse") }
+}
+// Explicit verifier double: verifies call ordering, the key used and failure propagation, never cryptography.
+class FileVerifier(val key: String) {
     init { if (key.isEmpty()) throw GeneralSecurityException("fixture key absent") }
     fun verifySignature(message: ByteArray, signature: String) {
         calls++
-        if (!allowed) throw GeneralSecurityException("fixture signature refused")
+        keys += key
+        if (!allowed || key in refused) throw GeneralSecurityException("fixture signature refused")
     }
-    companion object { var allowed = true; var calls = 0 }
+    companion object { var allowed = true; var calls = 0; val keys = mutableListOf<String>(); var refused = setOf<String>() }
 }
 '''
 STORAGE = '''package app.grapheneos.apps.util
-class AtomicFile2(name: String) {
-    fun write(v: ByteArray) { bytes=v }
-    fun read(): ByteArray? { reads++;return bytes }
-    companion object { var bytes: ByteArray?=null;var reads=0 }
+class AtomicFile2(val name: String) {
+    fun write(v: ByteArray) { files[name]=v }
+    fun read(): ByteArray? { reads++;return files[name] }
+    companion object { val files=mutableMapOf<String, ByteArray>();var reads=0 }
 }
 '''
 HARNESS = '''package app.grapheneos.apps.core
@@ -90,13 +96,19 @@ object NetworkFixture {
     // GET requests only. Automatic adds a HEAD probe per server.
     val requests: List<URL> get() = synchronized(opened) { opened.filter { it.requestMethod != "HEAD" }.map { it.url } }
     val probes: Int get() = synchronized(opened) { opened.count { it.requestMethod == "HEAD" } }
+    val paths: List<String> get() = requests.map { it.path }
     val ranges: List<String?> get() = synchronized(opened) { opened.filter { it.requestMethod != "HEAD" }.map { it.getRequestProperty("Range") } }
     // The first GET's answer. Canada's probe can be made to fail, so Europe goes first.
     var code = 200
+    // Every GET's answer when set, or a path's.
+    var everyCode: Int? = null
+    val codes = mutableMapOf<String, Int>()
     var error: IOException? = null
     var failAt = -1L
     var canadaProbeFails = false
     var body = "fixture catalog JSON\\n".toByteArray() + "X".repeat(100).toByteArray() + "\\n".toByteArray()
+    // Bodies by path, instead of body.
+    val bodies = mutableMapOf<String, ByteArray>()
     fun install() {
         // Keep TLS entirely synthetic, including HttpsURLConnection's constructor default.
         HttpsURLConnection.setDefaultSSLSocketFactory(org.grapheneos.tls.ModernTLSSocketFactory())
@@ -115,9 +127,10 @@ object NetworkFixture {
                             check(!instanceFollowRedirects)
                             if (requestMethod == "HEAD") return if (canadaProbeFails && url.host == "apps-na.diamaneos.de") 503 else 200
                             if (first()) error?.let { throw it }
-                            val answer = if (first()) code else 200
+                            val answer = codes[url.path] ?: everyCode ?: if (first()) code else 200
                             return if (answer == 200 && start() > 0) 206 else answer
                         }
+                        val body = bodies[url.path] ?: NetworkFixture.body
                         override fun getContentLengthLong() = body.size - start()
                         override fun getHeaderField(name: String): String? =
                             if (name == "Content-Range" && start() > 0) "bytes ${start()}-${body.size - 1}/${body.size}" else null
@@ -161,23 +174,23 @@ fun main(args: Array<String>) {
     when(args[0]) {
         "missing_key" -> {
             check(getCachedRepo().isDummy)
-            refuse { fetchRepo(Repo(JSONObject(), "fixture", true)) }
+            refuse { fetchRepo(getCachedRepo()) }
             check(NetworkFixture.requests.isEmpty() && AtomicFile2.reads == 0)
         }
         "policy_unavailable" -> {
             for (mode in listOf("canada", "automatic")) {
                 NetworkFixture.policy(mode)
                 android.provider.Settings.Global.unavailable = true
-                try { fetchRepo(Repo(JSONObject(), "fixture", true));error("Expected refusal") }
+                try { fetchRepo(getCachedRepo());error("Expected refusal") }
                 catch (e: IOException) { check(!de.diamaneos.downloads.DownloadTransport.retryable(e)) }
                 check(NetworkFixture.requests.isEmpty())
                 // Also fail before the HTTP adapter's alternate-origin loop and omit optional icons.
                 try { openConnection(null,"https://apps-na.diamaneos.de/metadata.1.0.sjson",{});error("Expected refusal") }
                 catch (e: IOException) { }
-                check(IconFixture(JSONObject()).iconUrl == null)
+                check(IconFixture(JSONObject(), Catalog.DiamaneOS).iconUrl == null)
                 android.provider.Settings.Global.unavailable = false
                 android.provider.Settings.Global.deny = true
-                try { fetchRepo(Repo(JSONObject(), "fixture", true));error("Expected refusal") }
+                try { fetchRepo(getCachedRepo());error("Expected refusal") }
                 catch (e: IOException) { }
                 android.provider.Settings.Global.deny = false
                 check(NetworkFixture.requests.isEmpty() && FileVerifier.calls == 0)
@@ -185,18 +198,141 @@ fun main(args: Array<String>) {
         }
         "selected_region" -> {
             NetworkFixture.policy("canada")
-            val result = fetchRepo(Repo(JSONObject(), "fixture", true))
-            check(result.timestamp == 1770000001L)
-            check(NetworkFixture.requests.single().host == "apps-na.diamaneos.de")
-            check(FileVerifier.calls == 1 && JSONObject.parsed == 1)
+            val result = fetchRepo(getCachedRepo())
+            check(result.parts.map { it.timestamp } == listOf(1800000000L, 1800000000L) && !result.isDummy)
+            check(NetworkFixture.requests.all { it.host == "apps-na.diamaneos.de" })
+            check(FileVerifier.calls == 2 && JSONObject.parsed == 2)
+        }
+        "catalog_keys" -> {
+            // Each catalog is fetched from its own path and verified with its own key only.
+            val result = fetchRepo(getCachedRepo())
+            check(NetworkFixture.paths == listOf("/metadata.1.0.sjson", "/grapheneos/metadata.1.0.sjson"))
+            check(FileVerifier.keys == listOf("fixture public verifier", GRAPHENEOS_CATALOG_KEY))
+            check(result.parts.map { it.catalog } == listOf(Catalog.DiamaneOS, Catalog.GrapheneOS))
+            check(AtomicFile2.files.keys == setOf("repo", "repo-grapheneos"))
+            // The caches stay bound to their catalog's key.
+            val cached = getCachedRepo()
+            check(!cached.isDummy && cached.parts.none { it.isDummy })
+        }
+        "partial_update" -> {
+            // GrapheneOS's catalog fails its signature check. Our catalog's update is kept, the failure reported.
+            FileVerifier.refused = setOf(GRAPHENEOS_CATALOG_KEY)
+            try { fetchRepo(getCachedRepo());error("Expected a partial update") }
+            catch (e: PartialRepoUpdate) {
+                check(e.cause is java.security.GeneralSecurityException)
+                check(!e.repo.parts[0].isDummy && e.repo.parts[1].isDummy)
+            }
+            check(AtomicFile2.files.keys == setOf("repo"))
+            // And the reverse.
+            AtomicFile2.files.clear()
+            FileVerifier.refused = setOf("fixture public verifier")
+            try { fetchRepo(getCachedRepo());error("Expected a partial update") }
+            catch (e: PartialRepoUpdate) { check(e.repo.parts[0].isDummy && !e.repo.parts[1].isDummy) }
+            check(AtomicFile2.files.keys == setOf("repo-grapheneos"))
+        }
+        "not_modified" -> {
+            val first = fetchRepo(getCachedRepo())
+            NetworkFixture.everyCode = 304
+            check(fetchRepo(first) === first)
+            check(NetworkFixture.requests.size == 4 && FileVerifier.calls == 2)
+        }
+        "scope" -> {
+            for (name in DIAMANEOS_PACKAGES) {
+                check(Catalog.DiamaneOS.lists(name, null, "DiamaneOS"))
+                check(!Catalog.DiamaneOS.lists(name, null, "GrapheneOS"))
+                check(!Catalog.DiamaneOS.lists(name, null, null))
+                check(!Catalog.DiamaneOS.lists(name, "org.example.renamed", "DiamaneOS"))
+                check(!Catalog.GrapheneOS.lists(name, null, "GrapheneOS"))
+                // Nor through the original-package system.
+                check(!Catalog.GrapheneOS.lists("app.example.other", name, "GrapheneOS"))
+            }
+            for (name in listOf("app.vanadium.browser", "app.grapheneos.pdfviewer", "com.google.android.gms")) {
+                check(Catalog.GrapheneOS.lists(name, null, "GrapheneOS") && Catalog.GrapheneOS.lists(name, null, null))
+                check(!Catalog.DiamaneOS.lists(name, null, "DiamaneOS"))
+            }
+            check(Catalog.GrapheneOS.lists("app.vanadium.browser", "org.chromium.chrome", "GrapheneOS"))
+            for (name in EXCLUDED_PACKAGES) {
+                check(!Catalog.GrapheneOS.lists(name, null, "GrapheneOS") && !Catalog.DiamaneOS.lists(name, null, "DiamaneOS"))
+            }
+            check(EXCLUDED_PACKAGES == setOf("app.grapheneos.info", "app.attestation.auditor"))
+            check(DIAMANEOS_PACKAGES == setOf("app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"))
+            // GrapheneOS's catalog can neither claim our label nor our namespace.
+            check(!Catalog.GrapheneOS.lists("app.example.other", null, "DiamaneOS"))
+            check(!Catalog.GrapheneOS.lists("de.diamaneos.future", null, "GrapheneOS"))
+            for (name in listOf("De.Diamaneos.x", "de.diamaneos", "App.GrapheneOS.Apps", "APP.ATTESTATION.AUDITOR")) {
+                check(!Catalog.GrapheneOS.lists(name, null, "GrapheneOS"))
+            }
+            check(Catalog.GrapheneOS.lists("de.diamaneosx.other", null, "GrapheneOS"))
+            check(Catalog.GrapheneOS.path == "grapheneos/metadata.1.0.sjson" && Catalog.DiamaneOS.path == CATALOG_PATH)
+        }
+        "parse_isolation" -> {
+            // A signed GrapheneOS catalog this App Store cannot parse keeps our catalog's update and is not cached.
+            NetworkFixture.bodies["/grapheneos/metadata.1.0.sjson"] = "unparsable\\n".toByteArray() + "X".repeat(100).toByteArray() + "\\n".toByteArray()
+            try { fetchRepo(getCachedRepo());error("Expected a partial update") }
+            catch (e: PartialRepoUpdate) {
+                check(e.cause is IllegalArgumentException)
+                check(!e.repo.parts[0].isDummy && e.repo.parts[1].isDummy)
+            }
+            check(AtomicFile2.files.keys == setOf("repo"))
+            // A cache this App Store cannot parse starts that catalog afresh and keeps the other.
+            val data = ByteArrayOutputStream()
+            DataOutputStream(data).use {
+                it.writeInt(2);it.writeString(GRAPHENEOS_CATALOG_KEY);it.writeString("0");it.writeString("")
+                it.writeByteArray("unparsable".toByteArray())
+            }
+            AtomicFile2.files["repo-grapheneos"] = data.toByteArray()
+            val cached = getCachedRepo()
+            check(!cached.parts[0].isDummy && cached.parts[1].isDummy)
+            // Its time stays the floor: an older GrapheneOS catalog is refused, ours still updates.
+            check(cached.parts[1].timestamp == 1800000000L)
+            JSONObject.nextTime = 1799999000L
+            try { fetchRepo(cached);error("Expected a partial update") }
+            catch (e: PartialRepoUpdate) {
+                check(e.cause is java.security.GeneralSecurityException)
+                check(e.repo.parts[1].isDummy && e.repo.parts[1].timestamp == 1800000000L)
+            }
+            JSONObject.nextTime = 1800000000L
+            // So does a truncated one, with the catalog's own floor.
+            AtomicFile2.files["repo-grapheneos"] = data.toByteArray().copyOf(6)
+            check(getCachedRepo().parts[1].isDummy && getCachedRepo().parts[1].timestamp == Catalog.GrapheneOS.minTimestamp)
+        }
+        "older_copy" -> {
+            // An older signed copy, for example on the other server, counts as not modified.
+            val first = fetchRepo(getCachedRepo())
+            val cached = AtomicFile2.files.toMap()
+            JSONObject.nextTime = 1799999000L
+            check(fetchRepo(first) === first)
+            check(AtomicFile2.files == cached && FileVerifier.calls == 4)
+            // On a phone without a catalog it is still refused below the catalog's floor.
+            AtomicFile2.files.clear()
+            JSONObject.nextTime = Catalog.GrapheneOS.minTimestamp - 1
+            refuse { fetchRepo(getCachedRepo()) }
+        }
+        "partial_unchanged" -> {
+            // Our catalog is current and GrapheneOS's fails: a partial update, so our packages still update.
+            val first = fetchRepo(getCachedRepo())
+            NetworkFixture.codes["/metadata.1.0.sjson"] = 304
+            FileVerifier.refused = setOf(GRAPHENEOS_CATALOG_KEY)
+            try { fetchRepo(first);error("Expected a partial update") }
+            catch (e: PartialRepoUpdate) { check(e.repo === first && e.cause is java.security.GeneralSecurityException) }
+        }
+        "version_gates" -> {
+            // GrapheneOS's gates name upstream versions: our 3603 is upstream 36.
+            check(Catalog.GrapheneOS.dependencyVersion("app.grapheneos.apps", 3603) == 36L)
+            check(Catalog.GrapheneOS.dependencyVersion("app.grapheneos.camera", 9304) == 93L)
+            check(Catalog.GrapheneOS.dependencyVersion("app.vanadium.config", 217) == 217L)
+            check(Catalog.DiamaneOS.dependencyVersion("app.grapheneos.apps", 3603) == 3603L)
+            // Vanadium's gate "app.grapheneos.apps >= 22" passes, a gate for upstream 37 does not.
+            check(Catalog.GrapheneOS.dependencyVersion("app.grapheneos.apps", 3603) >= 22)
+            check(Catalog.GrapheneOS.dependencyVersion("app.grapheneos.apps", 3603) < 37)
         }
         "automatic_failover" -> {
             NetworkFixture.policy("automatic")
             NetworkFixture.canadaProbeFails = true
             NetworkFixture.code = 503
-            fetchRepo(Repo(JSONObject(), "fixture", true))
-            check(NetworkFixture.requests.map { it.host } == listOf("apps.diamaneos.de", "apps-na.diamaneos.de"))
-            check(NetworkFixture.probes == 2 && FileVerifier.calls == 1)
+            fetchRepo(getCachedRepo())
+            check(NetworkFixture.requests.map { it.host } == listOf("apps.diamaneos.de", "apps-na.diamaneos.de", "apps.diamaneos.de"))
+            check(NetworkFixture.probes == 4 && FileVerifier.calls == 2)
         }
         "apk_resume" -> {
             NetworkFixture.policy("automatic")
@@ -220,14 +356,14 @@ fun main(args: Array<String>) {
         }
         "signature_failure" -> {
             FileVerifier.allowed = false
-            refuse { fetchRepo(Repo(JSONObject(), "fixture", true)) }
-            check(FileVerifier.calls == 1 && JSONObject.parsed == 0 && AtomicFile2.bytes == null)
-            check(NetworkFixture.requests.size == 1)
+            refuse { fetchRepo(getCachedRepo()) }
+            check(FileVerifier.calls == 2 && JSONObject.parsed == 0 && AtomicFile2.files.isEmpty())
+            check(NetworkFixture.requests.size == 2)
         }
         "downgrade_failure" -> {
             JSONObject.nextTime = 1L
-            refuse { fetchRepo(Repo(JSONObject(), "fixture", true)) }
-            check(FileVerifier.calls == 1 && NetworkFixture.requests.size == 1 && AtomicFile2.bytes == null)
+            refuse { fetchRepo(getCachedRepo()) }
+            check(FileVerifier.calls == 2 && NetworkFixture.requests.size == 2 && AtomicFile2.files.isEmpty())
         }
         "tls_or_redirect" -> {
             NetworkFixture.policy("automatic")
@@ -247,28 +383,39 @@ fun main(args: Array<String>) {
         }
         "short_metadata" -> {
             NetworkFixture.body = "fixture".toByteArray()
-            refuse { fetchRepo(Repo(JSONObject(), "fixture", true)) }
-            check(FileVerifier.calls == 0 && NetworkFixture.requests.size == 1)
+            refuse { fetchRepo(getCachedRepo()) }
+            check(FileVerifier.calls == 0 && NetworkFixture.requests.size == 2)
         }
         "metadata_bound" -> {
             NetworkFixture.body = ByteArray(8*1024*1024 + 1)
-            try { fetchRepo(Repo(JSONObject(), "fixture", true));error("Expected refusal") }
+            try { fetchRepo(getCachedRepo());error("Expected refusal") }
             catch (e: IOException) { }
-            check(FileVerifier.calls == 0 && NetworkFixture.requests.size == 1)
+            check(FileVerifier.calls == 0 && NetworkFixture.requests.size == 2)
         }
         "cache_binding" -> {
-            val data = ByteArrayOutputStream()
-            DataOutputStream(data).use { it.writeInt(2);it.writeString("different fixture authority");it.writeString("0") }
-            AtomicFile2.bytes = data.toByteArray()
+            fun entry(key: String) = ByteArrayOutputStream().also { data ->
+                DataOutputStream(data).use { it.writeInt(2);it.writeString(key);it.writeString("0") }
+            }.toByteArray()
+            AtomicFile2.files["repo"] = entry("different fixture authority")
+            // Our key never stands in for GrapheneOS's, nor the reverse.
+            AtomicFile2.files["repo-grapheneos"] = entry("fixture public verifier")
+            check(getCachedRepo().isDummy)
+            AtomicFile2.files["repo"] = entry(GRAPHENEOS_CATALOG_KEY)
             check(getCachedRepo().isDummy && NetworkFixture.requests.isEmpty())
         }
         "icon_policy" -> {
-            val icon = IconFixture(JSONObject())
+            val icon = IconFixture(JSONObject(), Catalog.DiamaneOS)
             check(icon.iconUrl == "https://apps.diamaneos.de/packages/app.fixture/icon.png")
             NetworkFixture.policy("automatic")
             check(icon.iconUrl == "https://apps.diamaneos.de/packages/app.fixture/icon.png")
             NetworkFixture.policy("canada")
             check(icon.iconUrl == "https://apps-na.diamaneos.de/packages/app.fixture/icon.png")
+            check(IconFixture(JSONObject(), Catalog.GrapheneOS).iconUrl == "https://apps-na.diamaneos.de/grapheneos/packages/app.fixture/icon.png")
+            check(NetworkFixture.requests.isEmpty())
+        }
+        "apk_paths" -> {
+            check(ApkFixture(Catalog.DiamaneOS).downloadUrl() == "https://apps.diamaneos.de/packages/app.fixture/7/base.apk.gz")
+            check(ApkFixture(Catalog.GrapheneOS).downloadUrl() == "https://apps.diamaneos.de/grapheneos/packages/app.fixture/7/base.apk.gz")
             check(NetworkFixture.requests.isEmpty())
         }
         "icons" -> {
@@ -319,10 +466,15 @@ class AdapterTests(unittest.TestCase):
             repo_source = (src / 'app/grapheneos/apps/core/Repo.kt').read_text()
             begin = repo_source.index('    private val iconType =')
             end = repo_source.index('\n    // Used for setting release channel', begin)
-            icon_source = 'package app.grapheneos.apps.core\nclass IconFixture(json: org.json.JSONObject) {\n val manifestPackageName = "app.fixture"\n' + repo_source[begin:end] + '\n}\n'
+            icon_source = 'package app.grapheneos.apps.core\nclass IconFixture(json: org.json.JSONObject, val catalog: Catalog) {\n val manifestPackageName = "app.fixture"\n' + repo_source[begin:end] + '\n}\n'
             (out / 'IconFixture.kt').write_text(icon_source)
-            kotlin = [out / p for p in ('Core.kt', 'Storage.kt', 'Harness.kt', 'IconFixture.kt')]
-            kotlin += [src / 'app/grapheneos/apps' / p for p in ('util/HttpUtils.kt', 'util/DownloadIconLoader.kt', 'util/DataStreamUtils.kt', 'core/RepoRetriever.kt')]
+            # And the actual APK download path.
+            download = re.search(r'^    fun downloadUrl\(\) = .*$', repo_source, re.M)[0]
+            (out / 'ApkFixture.kt').write_text('package app.grapheneos.apps.core\nclass ApkFixture(catalog: Catalog) {\n'
+                ' class Common(val catalog: Catalog)\n class Pkg(c: Catalog) { val common = Common(c); val manifestPackageName = "app.fixture"; val versionCode = 7L }\n'
+                ' val pkg = Pkg(catalog)\n val name = "base.apk"\n' + download + '\n}\n')
+            kotlin = [out / p for p in ('Core.kt', 'Storage.kt', 'Harness.kt', 'IconFixture.kt', 'ApkFixture.kt')]
+            kotlin += [src / 'app/grapheneos/apps' / p for p in ('util/HttpUtils.kt', 'util/DownloadIconLoader.kt', 'util/DataStreamUtils.kt', 'core/RepoRetriever.kt', 'core/Catalogs.kt')]
             cmd = [str(cls.jdk / 'bin/java'), '-cp', str(cls.kotlin / 'lib/*'), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-kotlin-home', str(cls.kotlin), '-jvm-target', '17', '-classpath', str(out), '-d', str(out)] + [str(p) for p in kotlin]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
             if result.returncode: raise RuntimeError(result.stderr)
@@ -339,6 +491,15 @@ class AdapterTests(unittest.TestCase):
     def test_missing_key_has_no_network_or_cache_effect(self): self.scenario('missing_key', 'disabled')
     def test_authority_failure_never_contacts_either_region(self): self.scenario('policy_unavailable')
     def test_shared_region_and_verifier_calls(self): self.scenario('selected_region')
+    def test_each_catalog_has_its_own_path_key_and_cache(self): self.scenario('catalog_keys')
+    def test_one_catalog_failing_keeps_the_others_update(self): self.scenario('partial_update')
+    def test_unchanged_catalogs_keep_the_repo(self): self.scenario('not_modified')
+    def test_catalog_package_scopes_are_disjoint(self): self.scenario('scope')
+    def test_apk_paths_follow_the_catalog(self): self.scenario('apk_paths')
+    def test_unparsable_catalog_never_breaks_the_other_or_the_cache(self): self.scenario('parse_isolation')
+    def test_older_copy_counts_as_not_modified(self): self.scenario('older_copy')
+    def test_failure_with_a_current_catalog_is_partial(self): self.scenario('partial_unchanged')
+    def test_grapheneos_version_gates_use_upstream_versions(self): self.scenario('version_gates')
     def test_automatic_moves_to_other_server(self): self.scenario('automatic_failover')
     def test_apk_download_resumes_on_other_server(self): self.scenario('apk_resume')
     def test_signature_failure_never_parses_caches_or_falls_back(self): self.scenario('signature_failure')
@@ -364,6 +525,17 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(42, len(decoded))
         self.assertEqual(b'Ed' + bytes.fromhex('4cefb04a1cf3d79c'), decoded[:10])
         self.assertIn('applicationId = "app.grapheneos.apps"', gradle)
+        # GrapheneOS's key is refused for our catalog and used only for GrapheneOS's catalog.
+        catalogs = (ROOT / 'app/src/main/java/app/grapheneos/apps/core/Catalogs.kt').read_text()
+        grapheneos = re.search(r'const val GRAPHENEOS_CATALOG_KEY = "([^"]+)"', catalogs)[1]
+        self.assertEqual(b'Ed' + bytes.fromhex('2d67012ed5baf5'), base64.b64decode(grapheneos, validate=True)[:9])
+        self.assertNotEqual(key[1], grapheneos)
+        self.assertIn(f'require(catalogKey != "{grapheneos}")', gradle)
+        sources = ROOT / 'app/src/main/java/app/grapheneos/apps'
+        self.assertEqual(1, sum(f.read_text().count(grapheneos) for f in sources.rglob('*.kt')))
+        install = (sources / 'core/InstallTask.kt').read_text()
+        self.assertIn('$REPO_BASE_URL/${rPackage.common.catalog.prefix}packages/', install)
+        self.assertNotIn('$REPO_BASE_URL/packages/', install)
 
 
 if __name__ == '__main__': unittest.main()
