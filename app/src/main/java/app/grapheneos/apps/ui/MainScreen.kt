@@ -77,6 +77,7 @@ open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
 
     private var suppressRepoUpdateResultCallback = false
     private var shownRepoErrorUpdateDialog = false
+    private var lastReportedRepoUpdateError: RepoUpdateError? = null
 
     override fun onRepoUpdateResult(error: RepoUpdateError?) {
         if (suppressRepoUpdateResultCallback) {
@@ -98,6 +99,11 @@ open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
         if (findNavController().currentDestination?.id == R.id.error_dialog) {
             return
         }
+        // The last result is replayed on every return to the screen.
+        if (error === lastReportedRepoUpdateError) {
+            return
+        }
+        lastReportedRepoUpdateError = error
         val notable = error.isNotable() &&
             (error.wasUpdateManuallyRequested || !shownRepoErrorUpdateDialog)
         if ((isDummyRepo && !shownRepoErrorUpdateDialog) || notable) {
