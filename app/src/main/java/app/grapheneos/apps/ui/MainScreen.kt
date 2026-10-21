@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import androidx.core.view.MenuProvider
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
+import androidx.navigation.fragment.findNavController
 import app.grapheneos.apps.BuildConfig
 import app.grapheneos.apps.PackageStates
 import app.grapheneos.apps.R
@@ -92,7 +93,14 @@ open class MainScreen : PackageListFragment<MainScreenBinding>(), MenuProvider {
             return
         }
 
-        if ((isDummyRepo && !shownRepoErrorUpdateDialog) || error.isNotable()) {
+        // DiamaneOS: a failing server re-opened the dialog on every retry and return to the app,
+        // stacking dialogs. Automatic checks show it once per screen, manual refreshes every time.
+        if (findNavController().currentDestination?.id == R.id.error_dialog) {
+            return
+        }
+        val notable = error.isNotable() &&
+            (error.wasUpdateManuallyRequested || !shownRepoErrorUpdateDialog)
+        if ((isDummyRepo && !shownRepoErrorUpdateDialog) || notable) {
             shownRepoErrorUpdateDialog = true
             ErrorDialog.show(this, error)
         } else if (error.wasUpdateManuallyRequested) {
