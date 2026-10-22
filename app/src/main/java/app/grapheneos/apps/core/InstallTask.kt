@@ -128,7 +128,8 @@ class InstallTask(
     private val packageCachePruningJob: Job? = PackageStates.packageCachePruningJob
 
     private suspend fun obtainAndWriteApks(session: Session) {
-        if (!params.isUpdate && maybeReuseAvailableApks(session)) {
+        // DiamaneOS: our catalog's APKs are not reused, so each passes the signer check.
+        if (!params.isUpdate && rPackage.common.catalog != Catalog.DiamaneOS && maybeReuseAvailableApks(session)) {
             // successfully reused APKs from other user profile
         } else {
             // If there was a cache pruning job running when this install task was created, await
@@ -382,6 +383,16 @@ class InstallTask(
             }
 
             lseekToStart(uncompressedFd.v)
+
+            // DiamaneOS: each APK from our catalog must carry one of our signers (Catalogs.kt).
+            if (apk.pkg.common.catalog == Catalog.DiamaneOS) {
+                uncompressedFd.dupToPfd().use {
+                    val pkgInfo = pkgManager.getPackageArchiveInfo("/proc/self/fd/${it.getFd()}",
+                        PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+                    checkDiamaneOSSigner(apk.name, pkgInfo?.signingInfo, apk.pkg.common.validCertDigests)
+                }
+                lseekToStart(uncompressedFd.v)
+            }
 
             if (apk.pkg.common.noCode || apk.pkg.common.isSharedLibrary) {
                 // see dupToPfd comment to see why dup is even needed

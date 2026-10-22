@@ -48,13 +48,14 @@ class Repo(val parts: List<CatalogPart>) {
     fun translateManifestPackageName(name: String) = renamedPackages[name] ?: name
 
     val packages: HashMap<String, RPackageContainer> = run {
-        val listed = parts.flatMap { part ->
+        val listed = listedEntries(parts.flatMap { part ->
             val packagesJson = part.json.getJSONObject("packages")
-            packagesJson.keys().asSequence().map { Triple(part.catalog, it, packagesJson.getJSONObject(it)) }
-                .filter { (catalog, name, json) ->
-                    catalog.lists(name, json.opt("originalPackage") as String?, json.opt("source") as String?)
-                }.toList()
-        }
+            packagesJson.keys().asSequence().map {
+                val json = packagesJson.getJSONObject(it)
+                CatalogEntry(part.catalog, it, json, json.opt("originalPackage") as String?, json.opt("source") as String?,
+                    json.optJSONArray("signatures")?.asStringList() ?: emptyList())
+            }.toList()
+        }, parts.any { it.catalog == Catalog.GrapheneOS && it.isDummy })
         val map = HashMap<String, RPackageContainer>(listed.size)
 
         // Collect packages renamed via original-package system. Applicable only to preinstalled apps.
