@@ -2,6 +2,7 @@
 package app.grapheneos.apps.util
 
 import android.content.Context
+import app.grapheneos.apps.core.Catalog
 import com.bumptech.glide.Glide
 import com.bumptech.glide.Priority
 import com.bumptech.glide.load.DataSource
@@ -29,8 +30,7 @@ internal class DownloadIconLoader : ModelLoader<GlideUrl, InputStream> {
 
         override fun loadData(priority: Priority, callback: DataFetcher.DataCallback<in InputStream>) {
             try {
-                val path = DownloadPolicy.appsPath(url)
-                if (!path.matches(Regex("packages/[A-Za-z0-9_.]+/icon\\.[A-Za-z0-9]+"))) {
+                if (!isIconPath(DownloadPolicy.appsPath(url))) {
                     throw java.net.ProtocolException("Unexpected icon path")
                 }
                 val conn = openConnection(null, url, {})
@@ -56,6 +56,12 @@ internal class DownloadIconLoader : ModelLoader<GlideUrl, InputStream> {
     }
 
     companion object {
+        private val ICON = Regex("packages/[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+/icon\\.[A-Za-z0-9]+")
+
+        // An icon of one of the catalogs, under that catalog's prefix.
+        fun isIconPath(path: String) =
+            Catalog.entries.any { path.startsWith(it.prefix) && path.substring(it.prefix.length).matches(ICON) }
+
         fun register(context: Context) {
             Glide.get(context).registry.replace(GlideUrl::class.java, InputStream::class.java,
                 object : ModelLoaderFactory<GlideUrl, InputStream> {
