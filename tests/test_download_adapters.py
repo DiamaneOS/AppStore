@@ -20,6 +20,10 @@ JAVA = {
     'android/content/pm/PackageManager.java': 'package android.content.pm; public class PackageManager { public static final int SIGNATURE_MATCH=0,PERMISSION_GRANTED=0; public int checkSignatures(String a,String b){return 0;} }',
     'android/content/Context.java': 'package android.content; public class Context {\n        public android.content.pm.PackageManager getPackageManager(){return new android.content.pm.PackageManager();}\n        public ContentResolver getContentResolver(){return new ContentResolver();}\n        public <T> T getSystemService(Class<T> t){return t.cast(new android.os.UserManager());}\n        public int checkSelfPermission(String p){return -1;} }',
     'android/content/ContentResolver.java': 'package android.content; public class ContentResolver {\n        public android.database.Cursor query(android.net.Uri uri,String[] p,String w,String[] a,String o){\n            if(!uri.value.equals("content://settings/global/diamaneos_download_server_policy"))throw new AssertionError();\n            if(android.provider.Settings.Global.deny)throw new SecurityException("Authority fixture refusal");\n            if(android.provider.Settings.Global.unavailable)return null; return new android.database.Cursor();} }',
+    'android/content/pm/Signature.java': 'package android.content.pm; public class Signature { final byte[] b; public Signature(byte[] b){this.b=b;} public byte[] toByteArray(){return b.clone();} }',
+    'android/content/pm/SigningInfo.java': '''package android.content.pm; public class SigningInfo {
+        final Signature[] s; final boolean multiple, past; public SigningInfo(Signature[] s,boolean multiple,boolean past){this.s=s;this.multiple=multiple;this.past=past;}
+        public boolean hasMultipleSigners(){return multiple;} public boolean hasPastSigningCertificates(){return past;} public Signature[] getApkContentsSigners(){return s;} }''',
     'android/content/ComponentName.java': 'package android.content; public class ComponentName { public ComponentName(String p,String c){} }',
     'android/content/Intent.java': 'package android.content; public class Intent { public Intent(String a){} public Intent setComponent(ComponentName c){return this;} }',
     'org/grapheneos/tls/ModernTLSSocketFactory.java': '''package org.grapheneos.tls; public class ModernTLSSocketFactory extends javax.net.ssl.SSLSocketFactory {
@@ -237,22 +241,41 @@ fun main(args: Array<String>) {
             check(NetworkFixture.requests.size == 4 && FileVerifier.calls == 2)
         }
         "scope" -> {
+            val json = JSONObject()
+            val ours = DIAMANEOS_SIGNERS.first()
+            val camera = "6436b155b917c2f9a9ed1d15c4993a5968ffabc94947c13f2aeee14b7b27ed59"
+            fun our(name: String, signers: List<String> = listOf(ours), original: String? = null, source: String? = "DiamaneOS") =
+                CatalogEntry(Catalog.DiamaneOS, name, json, original, source, signers)
+            fun their(name: String, original: String? = null) = CatalogEntry(Catalog.GrapheneOS, name, json, original, "GrapheneOS", listOf(camera))
+            fun listed(vararg entries: CatalogEntry, missing: Boolean = false) = listedEntries(entries.toList(), missing).map { it.catalog to it.name }
+            // Our catalog lists any package signed only by our certificates, CameraProcessor included.
+            for (name in DIAMANEOS_PACKAGES + "app.grapheneos.camera.processor" + "de.diamaneos.future") {
+                for (signer in DIAMANEOS_SIGNERS) check(listed(our(name, listOf(signer))) == listOf(Catalog.DiamaneOS to name))
+                check(listed(our(name, source = "GrapheneOS"), our(name, source = null), our(name, original = "org.example.renamed")).isEmpty())
+                // Another signer, alone or beside ours, two of ours, none, or ours in another spelling.
+                check(listed(our(name, listOf(camera)), our(name, listOf(ours, camera)), our(name, DIAMANEOS_SIGNERS.toList()), our(name, emptyList()),
+                    our(name, listOf(ours.uppercase()))).isEmpty())
+                // While GrapheneOS's catalog is missing, only our own builds.
+                check(listed(our(name), missing = true) == if (name in DIAMANEOS_PACKAGES) listOf(Catalog.DiamaneOS to name) else emptyList())
+            }
+            check(DIAMANEOS_SIGNERS.size == 3)
+            // A name GrapheneOS's catalog lists, in any case or as the name it updates, stays GrapheneOS's.
+            check(listed(their("app.vanadium.browser", "org.chromium.chrome"), our("app.vanadium.browser"), our("App.Vanadium.Browser"),
+                our("org.chromium.chrome")) == listOf(Catalog.GrapheneOS to "app.vanadium.browser"))
+            check(listed(their("app.grapheneos.camera.processor"), our("app.grapheneos.camera.processor")) == listOf(Catalog.GrapheneOS to "app.grapheneos.camera.processor"))
+            // GrapheneOS's entries for our own builds do not count.
+            for (name in DIAMANEOS_PACKAGES) check(listed(their(name), our(name)) == listOf(Catalog.DiamaneOS to name))
             for (name in DIAMANEOS_PACKAGES) {
-                check(Catalog.DiamaneOS.lists(name, null, "DiamaneOS"))
-                check(!Catalog.DiamaneOS.lists(name, null, "GrapheneOS"))
-                check(!Catalog.DiamaneOS.lists(name, null, null))
-                check(!Catalog.DiamaneOS.lists(name, "org.example.renamed", "DiamaneOS"))
                 check(!Catalog.GrapheneOS.lists(name, null, "GrapheneOS"))
                 // Nor through the original-package system.
                 check(!Catalog.GrapheneOS.lists("app.example.other", name, "GrapheneOS"))
             }
             for (name in listOf("app.vanadium.browser", "app.grapheneos.pdfviewer", "com.google.android.gms")) {
                 check(Catalog.GrapheneOS.lists(name, null, "GrapheneOS") && Catalog.GrapheneOS.lists(name, null, null))
-                check(!Catalog.DiamaneOS.lists(name, null, "DiamaneOS"))
             }
             check(Catalog.GrapheneOS.lists("app.vanadium.browser", "org.chromium.chrome", "GrapheneOS"))
             for (name in EXCLUDED_PACKAGES) {
-                check(!Catalog.GrapheneOS.lists(name, null, "GrapheneOS") && !Catalog.DiamaneOS.lists(name, null, "DiamaneOS"))
+                check(!Catalog.GrapheneOS.lists(name, null, "GrapheneOS") && listed(our(name), our(name.uppercase()), their(name)).isEmpty())
             }
             check(EXCLUDED_PACKAGES == setOf("app.grapheneos.info", "app.attestation.auditor"))
             check(DIAMANEOS_PACKAGES == setOf("app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"))
@@ -264,6 +287,31 @@ fun main(args: Array<String>) {
             }
             check(Catalog.GrapheneOS.lists("de.diamaneosx.other", null, "GrapheneOS"))
             check(Catalog.GrapheneOS.path == "grapheneos/metadata.1.0.sjson" && Catalog.DiamaneOS.path == CATALOG_PATH)
+        }
+        "signers" -> {
+            // The APK check, with our three public certificates in the order of DIAMANEOS_SIGNERS.
+            val certificates = args.drop(1).map { File(it).readBytes() }
+            check(certificates.size == 3)
+            val digests = certificates.map { java.security.MessageDigest.getInstance("SHA-256").digest(it) }
+            check(digests.map { d -> d.joinToString("") { "%02x".format(it) } } == DIAMANEOS_SIGNERS.toList())
+            fun info(vararg c: ByteArray, multiple: Boolean = false, past: Boolean = false) =
+                android.content.pm.SigningInfo(c.map { android.content.pm.Signature(it) }.toTypedArray(), multiple, past)
+            fun refused(info: android.content.pm.SigningInfo?, listed: Array<ByteArray>) =
+                try { checkDiamaneOSSigner("base.apk", info, listed);false } catch (e: java.security.GeneralSecurityException) { true }
+            for (i in certificates.indices) {
+                checkDiamaneOSSigner("base.apk", info(certificates[i]), arrayOf(digests[i]))
+                checkDiamaneOSSigner("base.apk", info(certificates[i]), digests.toTypedArray())
+                // One of ours, but not the one the entry lists.
+                check(refused(info(certificates[i]), arrayOf(digests[(i + 1) % 3])))
+            }
+            val other = "not one of our certificates".toByteArray()
+            val otherDigest = java.security.MessageDigest.getInstance("SHA-256").digest(other)
+            check(refused(info(other), arrayOf(otherDigest)))
+            check(refused(null, digests.toTypedArray()))
+            check(refused(info(), digests.toTypedArray()))
+            check(refused(info(certificates[0], certificates[1]), digests.toTypedArray()))
+            check(refused(info(certificates[0], multiple = true), digests.toTypedArray()))
+            check(refused(info(certificates[0], past = true), digests.toTypedArray()))
         }
         "parse_isolation" -> {
             // A signed GrapheneOS catalog this App Store cannot parse keeps our catalog's update and is not cached.
@@ -483,9 +531,9 @@ class AdapterTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.tmp.cleanup()
 
-    def scenario(self, name, variant='configured'):
+    def scenario(self, name, variant='configured', *args):
         cp = str(self.outputs[variant]) + os.pathsep + str(self.kotlin / 'lib/kotlin-stdlib.jar')
-        result = subprocess.run([str(self.jdk / 'bin/java'), '-cp', cp, 'app.grapheneos.apps.core.HarnessKt', name], capture_output=True, text=True, timeout=15)
+        result = subprocess.run([str(self.jdk / 'bin/java'), '-cp', cp, 'app.grapheneos.apps.core.HarnessKt', name, *args], capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_key_has_no_network_or_cache_effect(self): self.scenario('missing_key', 'disabled')
@@ -496,6 +544,15 @@ class AdapterTests(unittest.TestCase):
     def test_unchanged_catalogs_keep_the_repo(self): self.scenario('not_modified')
     def test_catalog_package_scopes_are_disjoint(self): self.scenario('scope')
     def test_apk_paths_follow_the_catalog(self): self.scenario('apk_paths')
+
+    def test_our_apks_need_our_listed_signer(self):
+        # tests/signers.pem: the public App Store, Camera and Auditor certificates.
+        pem = (ROOT / 'tests/signers.pem').read_text()
+        paths = []
+        for i, block in enumerate(re.findall(r'-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----', pem, re.S)):
+            paths.append(Path(self.tmp.name) / f'signer{i}.der')
+            paths[-1].write_bytes(base64.b64decode(''.join(block.split())))
+        self.scenario('signers', 'configured', *map(str, paths))
     def test_unparsable_catalog_never_breaks_the_other_or_the_cache(self): self.scenario('parse_isolation')
     def test_older_copy_counts_as_not_modified(self): self.scenario('older_copy')
     def test_failure_with_a_current_catalog_is_partial(self): self.scenario('partial_unchanged')
