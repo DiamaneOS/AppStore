@@ -249,7 +249,7 @@ fun main(args: Array<String>) {
             fun their(name: String, original: String? = null) = CatalogEntry(Catalog.GrapheneOS, name, json, original, "GrapheneOS", listOf(camera))
             fun listed(vararg entries: CatalogEntry, missing: Boolean = false) = listedEntries(entries.toList(), missing).map { it.catalog to it.name }
             // Our catalog lists any package signed only by our certificates, CameraProcessor included.
-            for (name in DIAMANEOS_PACKAGES + "app.grapheneos.camera.processor" + "de.diamaneos.future") {
+            for (name in DIAMANEOS_PACKAGES + "de.diamaneos.camera.processor" + "de.diamaneos.future") {
                 for (signer in DIAMANEOS_SIGNERS) check(listed(our(name, listOf(signer))) == listOf(Catalog.DiamaneOS to name))
                 check(listed(our(name, source = "GrapheneOS"), our(name, source = null), our(name, original = "org.example.renamed")).isEmpty())
                 // Another signer, alone or beside ours, two of ours, none, or ours in another spelling.
