@@ -477,6 +477,41 @@ fun main(args: Array<String>) {
                 })
             check(failed && NetworkFixture.requests.isEmpty())
         }
+        "icon_paths" -> {
+            fun load(url: String): ByteArray? {
+                var data: ByteArray? = null
+                var failed = false
+                DownloadIconLoader().buildLoadData(com.bumptech.glide.load.model.GlideUrl(url),1,1,com.bumptech.glide.load.Options()).fetcher.loadData(
+                    com.bumptech.glide.Priority.NORMAL, object : com.bumptech.glide.load.data.DataFetcher.DataCallback<InputStream> {
+                        override fun onDataReady(value: InputStream?) { data = value!!.readBytes() }
+                        override fun onLoadFailed(error: Exception) { failed = true }
+                    })
+                check(failed != (data != null))
+                return data
+            }
+            // Each catalog's icon, at the URL Repo.kt builds, reaches the decoder.
+            NetworkFixture.body = "fixture icon".toByteArray()
+            for (catalog in Catalog.entries) {
+                check(load(IconFixture(JSONObject(), catalog).iconUrl!!)!!.contentEquals(NetworkFixture.body))
+            }
+            check(NetworkFixture.paths == listOf("/packages/app.fixture/icon.png", "/grapheneos/packages/app.fixture/icon.png"))
+            // Only the catalogs' prefixes, and only icons.
+            for (path in listOf("other/packages/app.fixture/icon.png", "grapheneos/grapheneos/packages/app.fixture/icon.png",
+                    "grapheneospackages/app.fixture/icon.png", "grapheneos/packages/app.fixture/7/icon.png",
+                    "grapheneos/packages/app.fixture/7/base.apk.gz", "packages/app.fixture/7/base.apk.gz",
+                    "grapheneos/metadata.1.0.sjson", "grapheneos/packages/app.fixture/icon.png/x",
+                    "grapheneos/packages/../icon.png", "GrapheneOS/packages/app.fixture/icon.png")) {
+                check(!DownloadIconLoader.isIconPath(path))
+                check(load("https://apps.diamaneos.de/$path") == null)
+            }
+            check(NetworkFixture.requests.size == 2)
+            // The 1 MiB bound holds for GrapheneOS's icons too.
+            val url = IconFixture(JSONObject(), Catalog.GrapheneOS).iconUrl!!
+            NetworkFixture.bodies["/grapheneos/packages/app.fixture/icon.png"] = ByteArray(1024 * 1024 + 1)
+            check(load(url) == null)
+            NetworkFixture.bodies["/grapheneos/packages/app.fixture/icon.png"] = ByteArray(1024 * 1024)
+            check(load(url)!!.size == 1024 * 1024)
+        }
         else -> error("Unknown fixture")
     }
 }
@@ -568,6 +603,7 @@ class AdapterTests(unittest.TestCase):
     def test_cached_catalog_tied_to_public_authority(self): self.scenario('cache_binding')
     def test_icon_origin_tracks_shared_policy(self): self.scenario('icon_policy')
     def test_icon_external_origin_refused(self): self.scenario('icons')
+    def test_icons_of_both_catalogs_only(self): self.scenario('icon_paths')
 
     def test_fixed_pinned_domains_and_offline_catalog_key_default(self):
         doc = ET.parse(ROOT / 'app/src/main/res/xml/network_security_config.xml').getroot()
