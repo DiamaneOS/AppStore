@@ -621,4 +621,10 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn('$REPO_BASE_URL/packages/', install)
 
 
+    def test_deltas_stay_off_while_our_servers_serve_none(self):
+        repo = (ROOT / 'app/src/main/java/app/grapheneos/apps/core/Repo.kt').read_text()
+        self.assertIn('private const val USE_DELTAS = false', repo)
+        self.assertEqual(4, repo.count('if (USE_DELTAS)'))
+
+
 if __name__ == '__main__': unittest.main()

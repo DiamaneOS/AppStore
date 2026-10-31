@@ -322,6 +322,10 @@ private val emptyByteArray = ByteArray(0)
 private val emptyLongArray = LongArray(0)
 private val emptyJsonArray = JSONArray()
 
+// DiamaneOS: our servers serve no deltas (.ina), and GrapheneOS's catalog, mirrored unchanged, lists them
+// for most apps. Catalogs are read without deltas, so every update downloads the full APK.
+private const val USE_DELTAS = false
+
 private fun JSONObject.optJSONArray2(name: String): JSONArray {
     return opt(name) as? JSONArray ?: emptyJsonArray
 }
@@ -344,7 +348,7 @@ class RPackage(val common: RPackageContainer, val versionCode: Long, val abis: A
     val releaseChannel = ReleaseChannel.valueOf(json.optString("channel", ReleaseChannel.stable.name))
 
     val availableDeltaVersions: LongArray =
-        jsonArrayToLongArray(json.optJSONArray2("availableDeltaVersions"))
+        if (USE_DELTAS) jsonArrayToLongArray(json.optJSONArray2("availableDeltaVersions")) else emptyLongArray
 
     val apks: List<Apk> = run {
         val names = json.getJSONArray("apks")
@@ -356,9 +360,9 @@ class RPackage(val common: RPackageContainer, val versionCode: Long, val abis: A
         val v4SignatureHashes = json.optJSONArray("v4SignatureHashes")
         val fsvSignatureSizes = if (Build.VERSION.SDK_INT < 35) json.optJSONArray("fsvSignatureSizes") else null
         val fsvSignatureHashes = if (Build.VERSION.SDK_INT < 35) json.optJSONArray("fsvSignatureHashes") else null
-        val allDeltaSrcHashes = json.optJSONArray2("apkDeltaSrcHashes")
-        val allDeltaSizes = json.optJSONArray2("apkDeltaSizes")
-        val allDeltaHashes = json.optJSONArray2("apkDeltaHashes")
+        val allDeltaSrcHashes = if (USE_DELTAS) json.optJSONArray2("apkDeltaSrcHashes") else emptyJsonArray
+        val allDeltaSizes = if (USE_DELTAS) json.optJSONArray2("apkDeltaSizes") else emptyJsonArray
+        val allDeltaHashes = if (USE_DELTAS) json.optJSONArray2("apkDeltaHashes") else emptyJsonArray
         val numDeltas = availableDeltaVersions.size
         var deltasOffset = 0
 
