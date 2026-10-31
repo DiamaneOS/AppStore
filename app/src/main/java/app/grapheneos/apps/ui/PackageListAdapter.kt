@@ -79,7 +79,7 @@ fun PackageListItemBinding.set(fragment: Fragment, pkgState: PackageState) {
     val commonProps = rPackage.common
     val iconSha256 = commonProps.iconSha256
     if (iconSha256 != null && pkgIcon.tag != iconSha256) {
-        val url = VerifiedUrl(checkNotNull(commonProps.iconUrl), commonProps.iconSize, iconSha256)
+        val url = VerifiedUrl(checkNotNull(commonProps.iconPath), commonProps.iconSize, iconSha256)
 
         Glide.with(fragment)
             .load(url)

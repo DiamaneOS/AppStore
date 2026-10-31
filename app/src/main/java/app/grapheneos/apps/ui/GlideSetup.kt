@@ -23,7 +23,8 @@ class AppGlide : AppGlideModule() {
     }
 }
 
-data class VerifiedUrl(val url: String, val size: Int, val sha256: String)
+// DiamaneOS: the path of the icon on the Apps servers. DownloadIconLoader adds the origin.
+data class VerifiedUrl(val path: String, val size: Int, val sha256: String)
 
 class VerifiedUrlFetcher(private val verifiedUrl: VerifiedUrl) : DataFetcher<ByteBuffer> {
 
@@ -31,7 +32,7 @@ class VerifiedUrlFetcher(private val verifiedUrl: VerifiedUrl) : DataFetcher<Byt
         val result: ByteBuffer
         try {
             // DiamaneOS: the checks of the catalog's icons live in DownloadIconLoader.
-            result = ByteBuffer.wrap(DownloadIconLoader.load(verifiedUrl.url, verifiedUrl.size, verifiedUrl.sha256))
+            result = ByteBuffer.wrap(DownloadIconLoader.load(verifiedUrl.path, verifiedUrl.size, verifiedUrl.sha256))
         } catch (e: Exception) {
             callback.onLoadFailed(e)
             return

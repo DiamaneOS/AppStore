@@ -177,7 +177,10 @@ fun main(args: Array<String>) {
                 // Also fail before the HTTP adapter's alternate-origin loop and omit optional icons.
                 try { openConnection(null,"https://apps-na.diamaneos.de/metadata.1.0.sjson",{});error("Expected refusal") }
                 catch (e: IOException) { }
-                check(IconFixture(JSONObject(), Catalog.DiamaneOS).iconUrl == null)
+                // The icon fields never read the policy, and an icon load fails without a request.
+                check(IconFixture(JSONObject(), Catalog.DiamaneOS).iconPath == "packages/app.fixture/icon.png")
+                try { DownloadIconLoader.load("packages/app.fixture/icon.png", 12, ICON_SHA256);error("Expected refusal") }
+                catch (e: IOException) { }
                 android.provider.Settings.Global.unavailable = false
                 android.provider.Settings.Global.deny = true
                 try { fetchRepo(getCachedRepo());error("Expected refusal") }
@@ -448,14 +451,17 @@ fun main(args: Array<String>) {
             check(getCachedRepo().isDummy && NetworkFixture.requests.isEmpty())
         }
         "icon_policy" -> {
-            val icon = IconFixture(JSONObject(), Catalog.DiamaneOS)
-            check(icon.iconUrl == "https://apps.diamaneos.de/packages/app.fixture/icon.png")
-            NetworkFixture.policy("automatic")
-            check(icon.iconUrl == "https://apps.diamaneos.de/packages/app.fixture/icon.png")
+            // The icon fields come from the catalog alone. The origin is chosen when the icon loads.
             NetworkFixture.policy("canada")
-            check(icon.iconUrl == "https://apps-na.diamaneos.de/packages/app.fixture/icon.png")
-            check(IconFixture(JSONObject(), Catalog.GrapheneOS).iconUrl == "https://apps-na.diamaneos.de/grapheneos/packages/app.fixture/icon.png")
+            check(IconFixture(JSONObject(), Catalog.DiamaneOS).iconPath == "packages/app.fixture/icon.png")
+            check(IconFixture(JSONObject(), Catalog.GrapheneOS).iconPath == "grapheneos/packages/app.fixture/icon.png")
             check(NetworkFixture.requests.isEmpty())
+            NetworkFixture.body = "fixture icon".toByteArray()
+            for ((mode, host) in listOf("primary_eu" to "apps.diamaneos.de", "canada" to "apps-na.diamaneos.de")) {
+                NetworkFixture.policy(mode)
+                DownloadIconLoader.load("grapheneos/packages/app.fixture/icon.png", 12, ICON_SHA256)
+                check(NetworkFixture.requests.last().host == host)
+            }
         }
         "apk_paths" -> {
             check(ApkFixture(Catalog.DiamaneOS).downloadUrl("base.apk.br") == "https://apps.diamaneos.de/packages/app.fixture/7/base.apk.br")
@@ -464,16 +470,21 @@ fun main(args: Array<String>) {
         }
         "icons" -> {
             var failed = false
-            try { DownloadIconLoader.load("https://evil.invalid/icon.png", 12, ICON_SHA256) } catch (e: Exception) { failed = true }
+            for (path in listOf("https://evil.invalid/icon.png", "//evil.invalid/packages/app.fixture/icon.png")) {
+                try { DownloadIconLoader.load(path, 12, ICON_SHA256) } catch (e: Exception) { failed = true }
+                check(failed)
+                failed = false
+            }
+            failed = true
             check(failed && NetworkFixture.requests.isEmpty())
         }
         "icon_paths" -> {
-            fun load(url: String, size: Int = 12, sha256: String = ICON_SHA256): ByteArray? =
-                try { DownloadIconLoader.load(url, size, sha256) } catch (e: Exception) { null }
-            // Each catalog's icon, at the URL Repo.kt builds, reaches the decoder.
+            fun load(path: String, size: Int = 12, sha256: String = ICON_SHA256): ByteArray? =
+                try { DownloadIconLoader.load(path, size, sha256) } catch (e: Exception) { null }
+            // Each catalog's icon, at the path Repo.kt builds, reaches the decoder.
             NetworkFixture.body = "fixture icon".toByteArray()
             for (catalog in Catalog.entries) {
-                check(load(IconFixture(JSONObject(), catalog).iconUrl!!)!!.contentEquals(NetworkFixture.body))
+                check(load(IconFixture(JSONObject(), catalog).iconPath!!)!!.contentEquals(NetworkFixture.body))
             }
             check(NetworkFixture.paths == listOf("/packages/app.fixture/icon.png", "/grapheneos/packages/app.fixture/icon.png"))
             // Only the catalogs' prefixes, and only icons.
@@ -483,12 +494,12 @@ fun main(args: Array<String>) {
                     "grapheneos/metadata.1.0.sjson", "grapheneos/packages/app.fixture/icon.png/x",
                     "grapheneos/packages/../icon.png", "GrapheneOS/packages/app.fixture/icon.png")) {
                 check(!DownloadIconLoader.isIconPath(path))
-                check(load("https://apps.diamaneos.de/$path") == null)
+                check(load(path) == null)
             }
             check(NetworkFixture.requests.size == 2)
             // The signed catalog's size and SHA-256 decide: a bigger or smaller file, another hash or a size
             // outside 1 byte to 1 MiB never reach the decoder, and no request is made for a bad size.
-            val url = IconFixture(JSONObject(), Catalog.GrapheneOS).iconUrl!!
+            val url = IconFixture(JSONObject(), Catalog.GrapheneOS).iconPath!!
             check(load(url, 11) == null && load(url, 13) == null)
             check(load(url, sha256 = "00".repeat(32)) == null)
             val requests = NetworkFixture.requests.size
@@ -620,6 +631,22 @@ class AdapterTests(unittest.TestCase):
         self.assertIn('$REPO_BASE_URL/${rPackage.common.catalog.prefix}packages/', install)
         self.assertNotIn('$REPO_BASE_URL/packages/', install)
 
+
+    def test_every_glide_load_takes_a_verified_url(self):
+        # Nothing loads a plain URL or string any more, so every icon passes the catalog's size and SHA-256.
+        sources = list((ROOT / 'app/src/main/java').rglob('*.kt'))
+        loads = 0
+        for source in sources:
+            text = source.read_text()
+            for call in re.finditer(r'Glide\s*\.with\([^)]*\)\s*\.load\(([^)]*)\)', text):
+                loads += 1
+                argument = call.group(1).strip()
+                self.assertTrue(re.fullmatch(r'\w+', argument), f'{source.name}: {argument}')
+                self.assertRegex(text, rf'val {argument} = VerifiedUrl\(', source.name)
+            self.assertNotRegex(text, r'\bGlide\b[^\n]*\.load\(\s*"')
+        self.assertGreaterEqual(loads, 1)
+        # Any other file that starts a Glide request would have to be named here.
+        self.assertEqual(['PackageListAdapter.kt'], [f.name for f in sources if 'Glide.with(' in f.read_text()])
 
     def test_deltas_stay_off_while_our_servers_serve_none(self):
         repo = (ROOT / 'app/src/main/java/app/grapheneos/apps/core/Repo.kt').read_text()

@@ -202,17 +202,11 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
     }.toTypedArray()
 
     private val iconType = json.opt("iconType") as String?
-    val iconUrl: String? get() = try {
-        if (iconType != null) {
-            "$REPO_BASE_URL/${catalog.prefix}packages/$manifestPackageName/icon.$iconType"
-        } else {
-            null
-        }
-    } catch (e: java.io.IOException) {
-        null
-    }
-    val iconSha256: String? = if (iconUrl != null) json.getString("iconSha256") else null
-    val iconSize: Int = if (iconUrl != null) json.getInt("iconSize") else 0
+    // The icon's path on the Apps servers. DownloadIconLoader adds the origin when it loads, from the download
+    // policy of that moment, so parsing a catalog and binding a list item never read the policy.
+    val iconPath: String? = iconType?.let { "${catalog.prefix}packages/$manifestPackageName/icon.$it" }
+    val iconSha256: String? = if (iconType != null) json.getString("iconSha256") else null
+    val iconSize: Int = if (iconType != null) json.getInt("iconSize") else 0
 
     // Used for setting release channel for packages that are closely linked together.
     // This allows to significantly simplify the dependency resolution process (otherwise release

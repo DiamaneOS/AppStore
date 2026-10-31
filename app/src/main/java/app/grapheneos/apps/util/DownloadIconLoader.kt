@@ -2,8 +2,8 @@
 package app.grapheneos.apps.util
 
 import app.grapheneos.apps.core.Catalog
+import app.grapheneos.apps.core.REPO_BASE_URL
 import app.grapheneos.apps.core.sha256FromString
-import de.diamaneos.downloads.DownloadPolicy
 import de.diamaneos.downloads.DownloadTransport
 import java.net.HttpURLConnection.HTTP_OK
 import java.net.ProtocolException
@@ -23,16 +23,18 @@ internal object DownloadIconLoader {
     fun isIconPath(path: String) =
         Catalog.entries.any { path.startsWith(it.prefix) && path.substring(it.prefix.length).matches(ICON) }
 
-    fun load(url: String, size: Int, sha256: String): ByteArray {
-        if (!isIconPath(DownloadPolicy.appsPath(url))) throw ProtocolException("Unexpected icon path")
+    // Runs on Glide's thread, which is where the download policy is read for the origin.
+    fun load(path: String, size: Int, sha256: String): ByteArray {
+        if (!isIconPath(path)) throw ProtocolException("Unexpected icon path")
         if (size !in 1..MAX_BYTES) throw ProtocolException("Unexpected icon size")
+        val url = "$REPO_BASE_URL/$path"
         val bytes = openConnection(null, url, {}).use { conn ->
             if (conn.v.responseCode != HTTP_OK) throwResponseCodeException(conn.v)
             conn.v.inputStream.use { DownloadTransport.readBounded(it, size) }
         }
-        if (bytes.size != size) throw ProtocolException("Icon size mismatch for $url")
+        if (bytes.size != size) throw ProtocolException("Icon size mismatch for $path")
         if (!MessageDigest.getInstance("SHA-256").digest(bytes).contentEquals(sha256FromString(sha256))) {
-            throw GeneralSecurityException("SHA-256 mismatch for $url")
+            throw GeneralSecurityException("SHA-256 mismatch for $path")
         }
         return bytes
     }
