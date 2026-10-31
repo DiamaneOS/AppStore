@@ -37,31 +37,15 @@ JAVA = {
         public static long nextTime=1800000000L; public static int parsed=0; public long time=nextTime; public boolean bad;
         public JSONObject(){} public JSONObject(String s){parsed++;bad=s.contains("unparsable");}
         public long getLong(String k){if(!k.equals("time"))throw new AssertionError();return time;}
-        public Object opt(String k){return "png";} public JSONObject put(String k,Object v){if(k.equals("time"))time=((Number)v).longValue();return this;} }''',
-    'com/bumptech/glide/Priority.java': 'package com.bumptech.glide; public enum Priority { NORMAL }',
-    'com/bumptech/glide/load/DataSource.java': 'package com.bumptech.glide.load; public enum DataSource { REMOTE }',
-    'com/bumptech/glide/load/Options.java': 'package com.bumptech.glide.load; public class Options {}',
-    'com/bumptech/glide/load/data/DataFetcher.java': '''package com.bumptech.glide.load.data; public interface DataFetcher<T> {
-        interface DataCallback<T> {void onDataReady(T data);void onLoadFailed(Exception e);}
-        void loadData(com.bumptech.glide.Priority p,DataCallback<? super T> c);void cleanup();void cancel();Class<T> getDataClass();com.bumptech.glide.load.DataSource getDataSource(); }''',
-    'com/bumptech/glide/load/model/GlideUrl.java': '''package com.bumptech.glide.load.model; public class GlideUrl {
-        String v; public GlideUrl(String v){this.v=v;} public String toStringUrl(){return v;} }''',
-    'com/bumptech/glide/load/model/ModelLoader.java': '''package com.bumptech.glide.load.model; public interface ModelLoader<M,D> {
-        class LoadData<D> { public final com.bumptech.glide.load.data.DataFetcher<D> fetcher;
-        public LoadData(Object k,com.bumptech.glide.load.data.DataFetcher<D> f){fetcher=f;} }
-        boolean handles(M m);LoadData<D> buildLoadData(M m,int w,int h,com.bumptech.glide.load.Options o); }''',
-    'com/bumptech/glide/load/model/ModelLoaderFactory.java': '''package com.bumptech.glide.load.model; public interface ModelLoaderFactory<M,D> {
-        ModelLoader<M,D> build(MultiModelLoaderFactory f);void teardown(); }''',
-    'com/bumptech/glide/load/model/MultiModelLoaderFactory.java': 'package com.bumptech.glide.load.model; public class MultiModelLoaderFactory {}',
-    'com/bumptech/glide/Glide.java': '''package com.bumptech.glide; public class Glide {
-        public static Glide get(android.content.Context c){return new Glide();} public Registry getRegistry(){return new Registry();}
-        public static class Registry { public <M,D> void replace(Class<M> m,Class<D> d,com.bumptech.glide.load.model.ModelLoaderFactory<M,D> f){} } }''',
+        public Object opt(String k){return "png";} public String getString(String k){return k.equals("iconSha256")?"811d6293869324c4cc8274d854f28fcbc6efcab2e4d6cddb76d54fae9f2b7fa8":"png";} public int getInt(String k){return 12;}
+        public JSONObject put(String k,Object v){if(k.equals("time"))time=((Number)v).longValue();return this;} }''',
 }
 CORE = '''package app.grapheneos.apps.core
 import android.content.Context
 import org.json.JSONObject
 import java.security.GeneralSecurityException
 val appContext = Context()
+fun sha256FromString(str: String): ByteArray = java.util.HexFormat.of().parseHex(str).also { require(it.size == 32) }
 const val REPO_BASE_URL = "https://apps.diamaneos.de"
 // Stands in for the full parse: a part marked unparsable makes it throw, as an unknown source would.
 class Repo(val parts: List<CatalogPart>) {
@@ -94,6 +78,8 @@ import java.io.*
 import java.net.*
 import javax.net.ssl.*
 import org.json.JSONObject
+
+const val ICON_SHA256 = "811d6293869324c4cc8274d854f28fcbc6efcab2e4d6cddb76d54fae9f2b7fa8"
 
 object NetworkFixture {
     val opened: MutableList<HttpsURLConnection> = java.util.Collections.synchronizedList(mutableListOf())
@@ -325,7 +311,7 @@ fun main(args: Array<String>) {
             // A cache this App Store cannot parse starts that catalog afresh and keeps the other.
             val data = ByteArrayOutputStream()
             DataOutputStream(data).use {
-                it.writeInt(2);it.writeString(GRAPHENEOS_CATALOG_KEY);it.writeString("0");it.writeString("")
+                it.writeInt(3);it.writeString(GRAPHENEOS_CATALOG_KEY);it.writeString("0");it.writeString("")
                 it.writeByteArray("unparsable".toByteArray())
             }
             AtomicFile2.files["repo-grapheneos"] = data.toByteArray()
@@ -343,6 +329,16 @@ fun main(args: Array<String>) {
             // So does a truncated one, with the catalog's own floor.
             AtomicFile2.files["repo-grapheneos"] = data.toByteArray().copyOf(6)
             check(getCachedRepo().parts[1].isDummy && getCachedRepo().parts[1].timestamp == Catalog.GrapheneOS.minTimestamp)
+            // A cache of another format, 36.x's, cannot be used either, but its time stays the floor.
+            val older = ByteArrayOutputStream()
+            DataOutputStream(older).use {
+                it.writeInt(2);it.writeString(GRAPHENEOS_CATALOG_KEY);it.writeString("0");it.writeString("")
+                it.writeByteArray("{}".toByteArray())
+            }
+            AtomicFile2.files["repo-grapheneos"] = older.toByteArray()
+            JSONObject.nextTime = 1800000500L
+            check(getCachedRepo().parts[1].isDummy && getCachedRepo().parts[1].timestamp == 1800000500L)
+            JSONObject.nextTime = 1800000000L
         }
         "older_copy" -> {
             // An older signed copy, for example on the other server, counts as not modified.
@@ -442,7 +438,7 @@ fun main(args: Array<String>) {
         }
         "cache_binding" -> {
             fun entry(key: String) = ByteArrayOutputStream().also { data ->
-                DataOutputStream(data).use { it.writeInt(2);it.writeString(key);it.writeString("0") }
+                DataOutputStream(data).use { it.writeInt(3);it.writeString(key);it.writeString("0") }
             }.toByteArray()
             AtomicFile2.files["repo"] = entry("different fixture authority")
             // Our key never stands in for GrapheneOS's, nor the reverse.
@@ -462,33 +458,18 @@ fun main(args: Array<String>) {
             check(NetworkFixture.requests.isEmpty())
         }
         "apk_paths" -> {
-            check(ApkFixture(Catalog.DiamaneOS).downloadUrl() == "https://apps.diamaneos.de/packages/app.fixture/7/base.apk.gz")
-            check(ApkFixture(Catalog.GrapheneOS).downloadUrl() == "https://apps.diamaneos.de/grapheneos/packages/app.fixture/7/base.apk.gz")
+            check(ApkFixture(Catalog.DiamaneOS).downloadUrl("base.apk.br") == "https://apps.diamaneos.de/packages/app.fixture/7/base.apk.br")
+            check(ApkFixture(Catalog.GrapheneOS).downloadUrl("base.apk.br") == "https://apps.diamaneos.de/grapheneos/packages/app.fixture/7/base.apk.br")
             check(NetworkFixture.requests.isEmpty())
         }
         "icons" -> {
-            val loader = DownloadIconLoader()
-            val model = com.bumptech.glide.load.model.GlideUrl("https://evil.invalid/icon.png")
             var failed = false
-            loader.buildLoadData(model,1,1,com.bumptech.glide.load.Options()).fetcher.loadData(
-                com.bumptech.glide.Priority.NORMAL, object : com.bumptech.glide.load.data.DataFetcher.DataCallback<InputStream> {
-                    override fun onDataReady(value: InputStream?) { error("Unapproved icon reached decoder") }
-                    override fun onLoadFailed(error: Exception) { failed = true }
-                })
+            try { DownloadIconLoader.load("https://evil.invalid/icon.png", 12, ICON_SHA256) } catch (e: Exception) { failed = true }
             check(failed && NetworkFixture.requests.isEmpty())
         }
         "icon_paths" -> {
-            fun load(url: String): ByteArray? {
-                var data: ByteArray? = null
-                var failed = false
-                DownloadIconLoader().buildLoadData(com.bumptech.glide.load.model.GlideUrl(url),1,1,com.bumptech.glide.load.Options()).fetcher.loadData(
-                    com.bumptech.glide.Priority.NORMAL, object : com.bumptech.glide.load.data.DataFetcher.DataCallback<InputStream> {
-                        override fun onDataReady(value: InputStream?) { data = value!!.readBytes() }
-                        override fun onLoadFailed(error: Exception) { failed = true }
-                    })
-                check(failed != (data != null))
-                return data
-            }
+            fun load(url: String, size: Int = 12, sha256: String = ICON_SHA256): ByteArray? =
+                try { DownloadIconLoader.load(url, size, sha256) } catch (e: Exception) { null }
             // Each catalog's icon, at the URL Repo.kt builds, reaches the decoder.
             NetworkFixture.body = "fixture icon".toByteArray()
             for (catalog in Catalog.entries) {
@@ -498,19 +479,28 @@ fun main(args: Array<String>) {
             // Only the catalogs' prefixes, and only icons.
             for (path in listOf("other/packages/app.fixture/icon.png", "grapheneos/grapheneos/packages/app.fixture/icon.png",
                     "grapheneospackages/app.fixture/icon.png", "grapheneos/packages/app.fixture/7/icon.png",
-                    "grapheneos/packages/app.fixture/7/base.apk.gz", "packages/app.fixture/7/base.apk.gz",
+                    "grapheneos/packages/app.fixture/7/base.apk.br", "packages/app.fixture/7/base.apk.br",
                     "grapheneos/metadata.1.0.sjson", "grapheneos/packages/app.fixture/icon.png/x",
                     "grapheneos/packages/../icon.png", "GrapheneOS/packages/app.fixture/icon.png")) {
                 check(!DownloadIconLoader.isIconPath(path))
                 check(load("https://apps.diamaneos.de/$path") == null)
             }
             check(NetworkFixture.requests.size == 2)
-            // The 1 MiB bound holds for GrapheneOS's icons too.
+            // The signed catalog's size and SHA-256 decide: a bigger or smaller file, another hash or a size
+            // outside 1 byte to 1 MiB never reach the decoder, and no request is made for a bad size.
             val url = IconFixture(JSONObject(), Catalog.GrapheneOS).iconUrl!!
+            check(load(url, 11) == null && load(url, 13) == null)
+            check(load(url, sha256 = "00".repeat(32)) == null)
+            val requests = NetworkFixture.requests.size
+            check(load(url, 0) == null && load(url, 1024 * 1024 + 1) == null && load(url, -1) == null)
+            check(NetworkFixture.requests.size == requests)
+            // The 1 MiB bound holds for GrapheneOS's icons too.
+            val big = ByteArray(1024 * 1024)
+            val bigSha = java.security.MessageDigest.getInstance("SHA-256").digest(big).joinToString("") { "%02x".format(it) }
+            NetworkFixture.bodies["/grapheneos/packages/app.fixture/icon.png"] = big
+            check(load(url, big.size, bigSha)!!.size == big.size)
             NetworkFixture.bodies["/grapheneos/packages/app.fixture/icon.png"] = ByteArray(1024 * 1024 + 1)
-            check(load(url) == null)
-            NetworkFixture.bodies["/grapheneos/packages/app.fixture/icon.png"] = ByteArray(1024 * 1024)
-            check(load(url)!!.size == 1024 * 1024)
+            check(load(url, big.size, bigSha) == null)
         }
         else -> error("Unknown fixture")
     }
@@ -552,7 +542,7 @@ class AdapterTests(unittest.TestCase):
             icon_source = 'package app.grapheneos.apps.core\nclass IconFixture(json: org.json.JSONObject, val catalog: Catalog) {\n val manifestPackageName = "app.fixture"\n' + repo_source[begin:end] + '\n}\n'
             (out / 'IconFixture.kt').write_text(icon_source)
             # And the actual APK download path.
-            download = re.search(r'^    fun downloadUrl\(\) = .*$', repo_source, re.M)[0]
+            download = re.search(r'^    fun downloadUrl\(fileName: String\) = .*$', repo_source, re.M)[0]
             (out / 'ApkFixture.kt').write_text('package app.grapheneos.apps.core\nclass ApkFixture(catalog: Catalog) {\n'
                 ' class Common(val catalog: Catalog)\n class Pkg(c: Catalog) { val common = Common(c); val manifestPackageName = "app.fixture"; val versionCode = 7L }\n'
                 ' val pkg = Pkg(catalog)\n val name = "base.apk"\n' + download + '\n}\n')

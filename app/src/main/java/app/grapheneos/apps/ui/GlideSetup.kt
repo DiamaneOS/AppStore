@@ -1,10 +1,7 @@
 package app.grapheneos.apps.ui
 
 import android.content.Context
-import app.grapheneos.apps.core.sha256FromString
-import app.grapheneos.apps.util.copyTo2
-import app.grapheneos.apps.util.openConnection
-import app.grapheneos.apps.util.throwResponseCodeException
+import app.grapheneos.apps.util.DownloadIconLoader
 import com.bumptech.glide.Glide
 import com.bumptech.glide.Priority
 import com.bumptech.glide.Registry
@@ -17,12 +14,7 @@ import com.bumptech.glide.load.model.ModelLoaderFactory
 import com.bumptech.glide.load.model.MultiModelLoaderFactory
 import com.bumptech.glide.module.AppGlideModule
 import com.bumptech.glide.signature.ObjectKey
-import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection.HTTP_OK
 import java.nio.ByteBuffer
-import java.security.DigestOutputStream
-import java.security.GeneralSecurityException
-import java.security.MessageDigest
 
 @GlideModule
 class AppGlide : AppGlideModule() {
@@ -38,26 +30,8 @@ class VerifiedUrlFetcher(private val verifiedUrl: VerifiedUrl) : DataFetcher<Byt
     override fun loadData(priority: Priority, callback: DataFetcher.DataCallback<in ByteBuffer>) {
         val result: ByteBuffer
         try {
-            openConnection(null, verifiedUrl.url, {}).use { conn ->
-                if (conn.v.responseCode != HTTP_OK) {
-                    throwResponseCodeException(conn.v)
-                }
-
-                val arrayOutputStream = ByteArrayOutputStream(verifiedUrl.size)
-
-                val sha256 = MessageDigest.getInstance("SHA-256")
-
-                conn.v.inputStream.use { inputStream ->
-                    DigestOutputStream(arrayOutputStream, sha256).use { outputStream ->
-                        inputStream.copyTo2(verifiedUrl.size.toLong(), outputStream, null, verifiedUrl.url)
-                    }
-                }
-
-                if (!sha256.digest().contentEquals(sha256FromString(verifiedUrl.sha256))) {
-                    throw GeneralSecurityException("SHA-256 mismatch for ${verifiedUrl.url}")
-                }
-                result = ByteBuffer.wrap(arrayOutputStream.toByteArray())
-            }
+            // DiamaneOS: the checks of the catalog's icons live in DownloadIconLoader.
+            result = ByteBuffer.wrap(DownloadIconLoader.load(verifiedUrl.url, verifiedUrl.size, verifiedUrl.sha256))
         } catch (e: Exception) {
             callback.onLoadFailed(e)
             return

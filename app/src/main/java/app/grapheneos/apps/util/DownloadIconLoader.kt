@@ -1,73 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
 package app.grapheneos.apps.util
 
-import android.content.Context
 import app.grapheneos.apps.core.Catalog
-import com.bumptech.glide.Glide
-import com.bumptech.glide.Priority
-import com.bumptech.glide.load.DataSource
-import com.bumptech.glide.load.Options
-import com.bumptech.glide.load.data.DataFetcher
-import com.bumptech.glide.load.model.GlideUrl
-import com.bumptech.glide.load.model.ModelLoader
-import com.bumptech.glide.load.model.ModelLoaderFactory
-import com.bumptech.glide.load.model.MultiModelLoaderFactory
+import app.grapheneos.apps.core.sha256FromString
 import de.diamaneos.downloads.DownloadPolicy
-import java.io.InputStream
+import de.diamaneos.downloads.DownloadTransport
 import java.net.HttpURLConnection.HTTP_OK
+import java.net.ProtocolException
+import java.security.GeneralSecurityException
+import java.security.MessageDigest
 
-/** Icons obey the same origin and redirect policy as the signed catalog and packages. */
-internal class DownloadIconLoader : ModelLoader<GlideUrl, InputStream> {
-    override fun handles(model: GlideUrl): Boolean = true
+/**
+ * Icons obey the same origin and redirect policy as the signed catalog and packages. Only an icon of
+ * one of the two catalogs is fetched, at most 1 MiB, and it must match the size and SHA-256 that the
+ * signed catalog gives, before it reaches the image decoder.
+ */
+internal object DownloadIconLoader {
+    private const val MAX_BYTES = 1024 * 1024
+    private val ICON = Regex("packages/[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+/icon\\.[A-Za-z0-9]+")
 
-    override fun buildLoadData(model: GlideUrl, width: Int, height: Int, options: Options) =
-        ModelLoader.LoadData(model, Fetcher(model.toStringUrl()))
+    // An icon of one of the catalogs, under that catalog's prefix.
+    fun isIconPath(path: String) =
+        Catalog.entries.any { path.startsWith(it.prefix) && path.substring(it.prefix.length).matches(ICON) }
 
-    private class Fetcher(val url: String) : DataFetcher<InputStream> {
-        @Volatile private var connection: ScopedHttpConnection? = null
-        @Volatile private var cancelled = false
-        private var stream: InputStream? = null
-
-        override fun loadData(priority: Priority, callback: DataFetcher.DataCallback<in InputStream>) {
-            try {
-                if (!isIconPath(DownloadPolicy.appsPath(url))) {
-                    throw java.net.ProtocolException("Unexpected icon path")
-                }
-                val conn = openConnection(null, url, {})
-                connection = conn
-                if (cancelled) { conn.close(); return }
-                if (conn.v.responseCode != HTTP_OK) throwResponseCodeException(conn.v)
-                // Icons are optional. Oversized objects never reach the image decoder.
-                val bytes = conn.v.inputStream.use {
-                    de.diamaneos.downloads.DownloadTransport.readBounded(it, 1024 * 1024)
-                }
-                stream = bytes.inputStream()
-                callback.onDataReady(stream)
-            } catch (e: Exception) {
-                callback.onLoadFailed(e)
-            } finally {
-                connection?.close()
-            }
+    fun load(url: String, size: Int, sha256: String): ByteArray {
+        if (!isIconPath(DownloadPolicy.appsPath(url))) throw ProtocolException("Unexpected icon path")
+        if (size !in 1..MAX_BYTES) throw ProtocolException("Unexpected icon size")
+        val bytes = openConnection(null, url, {}).use { conn ->
+            if (conn.v.responseCode != HTTP_OK) throwResponseCodeException(conn.v)
+            conn.v.inputStream.use { DownloadTransport.readBounded(it, size) }
         }
-        override fun cleanup() { stream?.close(); connection?.close() }
-        override fun cancel() { cancelled = true; connection?.close() }
-        override fun getDataClass(): Class<InputStream> = InputStream::class.java
-        override fun getDataSource(): DataSource = DataSource.REMOTE
-    }
-
-    companion object {
-        private val ICON = Regex("packages/[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+/icon\\.[A-Za-z0-9]+")
-
-        // An icon of one of the catalogs, under that catalog's prefix.
-        fun isIconPath(path: String) =
-            Catalog.entries.any { path.startsWith(it.prefix) && path.substring(it.prefix.length).matches(ICON) }
-
-        fun register(context: Context) {
-            Glide.get(context).registry.replace(GlideUrl::class.java, InputStream::class.java,
-                object : ModelLoaderFactory<GlideUrl, InputStream> {
-                    override fun build(factory: MultiModelLoaderFactory) = DownloadIconLoader()
-                    override fun teardown() = Unit
-                })
+        if (bytes.size != size) throw ProtocolException("Icon size mismatch for $url")
+        if (!MessageDigest.getInstance("SHA-256").digest(bytes).contentEquals(sha256FromString(sha256))) {
+            throw GeneralSecurityException("SHA-256 mismatch for $url")
         }
+        return bytes
     }
 }

@@ -52,12 +52,6 @@ class ApplicationImpl : Application(), ActivityLifecycleCallbacks {
         registerActivityLifecycleCallbacks(this)
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        // Glide needs the application context, which is set only after attachBaseContext.
-        app.grapheneos.apps.util.DownloadIconLoader.register(this)
-    }
-
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         PackageStates.onResourceConfigChanged()
