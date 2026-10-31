@@ -65,16 +65,20 @@ enum class Catalog(
 data class CatalogEntry(val catalog: Catalog, val name: String, val json: JSONObject, val originalPackage: String?,
                    val source: String?, val signers: List<String>)
 
+// The namespace GrapheneOS's catalog can never list (Catalog.lists), so its names need no check against it.
+private fun inDiamaneOSNamespace(name: String) = name == "de.diamaneos" || name.startsWith("de.diamaneos.")
+
 // The entries the App Store takes. Ours must list one of our signers, and a name GrapheneOS's catalog
 // lists is GrapheneOS's, so ours may not list it. While GrapheneOS's catalog is missing, its names
-// are unknown and ours lists only DIAMANEOS_PACKAGES.
+// are unknown and ours lists only DIAMANEOS_PACKAGES and names in our own namespace.
 fun listedEntries(entries: List<CatalogEntry>, grapheneOSMissing: Boolean): List<CatalogEntry> {
     val listed = entries.filter { it.catalog.lists(it.name, it.originalPackage, it.source) }
     val grapheneOS = listed.filter { it.catalog == Catalog.GrapheneOS }
         .flatMap { listOfNotNull(it.name, it.originalPackage) }.map { it.lowercase() }.toSet()
     return listed.filter {
         it.catalog == Catalog.GrapheneOS || (it.name.lowercase() !in grapheneOS && it.signers.size == 1
-            && it.signers[0] in DIAMANEOS_SIGNERS && (!grapheneOSMissing || it.name in DIAMANEOS_PACKAGES))
+            && it.signers[0] in DIAMANEOS_SIGNERS
+            && (!grapheneOSMissing || it.name in DIAMANEOS_PACKAGES || inDiamaneOSNamespace(it.name)))
     }
 }
 

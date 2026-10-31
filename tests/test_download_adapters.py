@@ -244,9 +244,14 @@ fun main(args: Array<String>) {
                 // Another signer, alone or beside ours, two of ours, none, or ours in another spelling.
                 check(listed(our(name, listOf(camera)), our(name, listOf(ours, camera)), our(name, DIAMANEOS_SIGNERS.toList()), our(name, emptyList()),
                     our(name, listOf(ours.uppercase()))).isEmpty())
-                // While GrapheneOS's catalog is missing, only our own builds.
-                check(listed(our(name), missing = true) == if (name in DIAMANEOS_PACKAGES) listOf(Catalog.DiamaneOS to name) else emptyList())
+                // While GrapheneOS's catalog is missing, only our own builds and names in our namespace.
+                check(listed(our(name), missing = true) == listOf(Catalog.DiamaneOS to name))
             }
+            // Other names stay hidden then, with other spellings of our namespace.
+            for (name in listOf("org.example.other", "de.diamaneosx.app", "de.diamaneos-app", "De.Diamaneos.app", "app.grapheneos.camera.processor")) {
+                check(listed(our(name), missing = true).isEmpty())
+            }
+            check(listed(our("de.diamaneos.camera.processor"), our("org.example.other"), missing = true) == listOf(Catalog.DiamaneOS to "de.diamaneos.camera.processor"))
             check(DIAMANEOS_SIGNERS.size == 3)
             // A name GrapheneOS's catalog lists, in any case or as the name it updates, stays GrapheneOS's.
             check(listed(their("app.vanadium.browser", "org.chromium.chrome"), our("app.vanadium.browser"), our("App.Vanadium.Browser"),
