@@ -12,10 +12,12 @@ import app.grapheneos.apps.ApplicationImpl
 import app.grapheneos.apps.Notifications
 import app.grapheneos.apps.PackageStates
 import app.grapheneos.apps.R
+import app.grapheneos.apps.core.CheckReport
 import app.grapheneos.apps.core.RPackage
 import app.grapheneos.apps.core.RepoUpdateError
 import app.grapheneos.apps.core.appContext
 import app.grapheneos.apps.core.appResources
+import app.grapheneos.apps.core.checkReport
 import app.grapheneos.apps.core.collectOutdatedPackageGroups
 import app.grapheneos.apps.setContentTitle
 import app.grapheneos.apps.show
@@ -50,13 +52,17 @@ class UpdateCheckJob : JobService() {
                 showUpdateCheckFailedNotification(repoUpdateError)
             } else {
                 val outdatedPackageGroups = collectOutdatedPackageGroups()
+                val report = checkReport(repoUpdateError != null, outdatedPackageGroups.isNotEmpty())
+                showPartialFailure(report, repoUpdateError)
 
-                if (outdatedPackageGroups.isEmpty()) {
-                    showAllUpToDateNotification()
-                } else {
-                    showUpdatesAvailableNotification(outdatedPackageGroups)
+                when (report) {
+                    CheckReport.ALL_UP_TO_DATE -> showAllUpToDateNotification()
+                    CheckReport.FAILED_PARTLY -> Unit
+                    CheckReport.UPDATES, CheckReport.UPDATES_AND_FAILED_PARTLY -> {
+                        showUpdatesAvailableNotification(outdatedPackageGroups)
 
-                    AutoUpdatePrefs.maybeScheduleAutoUpdateJob()
+                        AutoUpdatePrefs.maybeScheduleAutoUpdateJob()
+                    }
                 }
             }
 
@@ -142,11 +148,27 @@ fun showAllUpToDateNotification() {
     }
 }
 
-fun showUpdateCheckFailedNotification(repoUpdateError: RepoUpdateError) {
+fun showUpdateCheckFailedNotification(repoUpdateError: RepoUpdateError,
+                                      id: Int = Notifications.ID_AUTO_UPDATE_JOB_STATUS) {
     Notifications.builder(Notifications.CH_BACKGROUND_UPDATE_CHECK_FAILED).run {
         setSmallIcon(R.drawable.ic_error)
         setContentTitle(R.string.app_update_check_failed)
         setContentIntent(ErrorDialog.createPendingIntent(repoUpdateError))
-        show(Notifications.ID_AUTO_UPDATE_JOB_STATUS)
+        show(id)
+    }
+}
+
+// DiamaneOS: one catalog failed and the other is current (Catalogs.kt). With nothing to update, the failure takes
+// the status notification, so an earlier "all up to date" goes. With updates, it stays beside them until a check
+// succeeds.
+fun showPartialFailure(report: CheckReport, repoUpdateError: RepoUpdateError?) {
+    when (report) {
+        CheckReport.FAILED_PARTLY -> {
+            Notifications.cancel(Notifications.ID_UPDATE_CHECK_PARTIAL)
+            showUpdateCheckFailedNotification(repoUpdateError!!)
+        }
+        CheckReport.UPDATES_AND_FAILED_PARTLY ->
+            showUpdateCheckFailedNotification(repoUpdateError!!, Notifications.ID_UPDATE_CHECK_PARTIAL)
+        else -> Notifications.cancel(Notifications.ID_UPDATE_CHECK_PARTIAL)
     }
 }

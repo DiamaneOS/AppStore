@@ -20,6 +20,7 @@ object Notifications {
     const val ID_PACKAGE_DOWNLOAD = 1
     const val ID_AUTO_UPDATE_JOB_STATUS = 2
     const val ID_AUTO_UPDATE_DOWNLOAD_FAILED = 3
+    const val ID_UPDATE_CHECK_PARTIAL = 4
 
     private const val FIRST_DYNAMIC_ID = 1000
 

@@ -99,6 +99,15 @@ class CatalogPart(val catalog: Catalog, val json: JSONObject, val eTag: String, 
 // One catalog failed and the other is current. The repo holds the current catalog's update, if any.
 class PartialRepoUpdate(val repo: Repo, cause: Throwable) : Exception(cause)
 
+// What a background check reports when no catalog failed completely. A catalog that failed while the other is
+// current never counts as "all up to date". The other catalog's updates go ahead and the failure is reported.
+enum class CheckReport { ALL_UP_TO_DATE, UPDATES, FAILED_PARTLY, UPDATES_AND_FAILED_PARTLY }
+
+fun checkReport(partialFailure: Boolean, updates: Boolean) = when {
+    !partialFailure -> if (updates) CheckReport.UPDATES else CheckReport.ALL_UP_TO_DATE
+    else -> if (updates) CheckReport.UPDATES_AND_FAILED_PARTLY else CheckReport.FAILED_PARTLY
+}
+
 class RepoParts(val repo: Repo, val failed: Set<Int>, val failure: Exception?)
 
 // Parses the repo. A part this App Store cannot parse falls back to its previous one, so one catalog

@@ -7,7 +7,9 @@ import android.util.Log
 import app.grapheneos.apps.ApplicationImpl
 import app.grapheneos.apps.Notifications
 import app.grapheneos.apps.PackageStates
+import app.grapheneos.apps.core.CheckReport
 import app.grapheneos.apps.core.InstallParams
+import app.grapheneos.apps.core.checkReport
 import app.grapheneos.apps.core.collectOutdatedPackageGroups
 import app.grapheneos.apps.core.startPackageUpdate
 import app.grapheneos.apps.util.checkMainThread
@@ -48,10 +50,12 @@ class AutoUpdateJob : JobService() {
                 showUpdateCheckFailedNotification(repoUpdateError)
             } else {
                 val outdatedPackageGroups = collectOutdatedPackageGroups()
+                val report = checkReport(repoUpdateError != null, outdatedPackageGroups.isNotEmpty())
+                showPartialFailure(report, repoUpdateError)
 
-                if (outdatedPackageGroups.isEmpty()) {
+                if (report == CheckReport.ALL_UP_TO_DATE) {
                     showAllUpToDateNotification()
-                } else {
+                } else if (report != CheckReport.FAILED_PARTLY) {
                     Notifications.cancel(Notifications.ID_AUTO_UPDATE_JOB_STATUS)
 
                     val jobs = startPackageUpdate(installParams, outdatedPackageGroups)

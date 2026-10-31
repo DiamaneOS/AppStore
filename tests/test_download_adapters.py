@@ -513,6 +513,13 @@ fun main(args: Array<String>) {
             NetworkFixture.bodies["/grapheneos/packages/app.fixture/icon.png"] = ByteArray(1024 * 1024 + 1)
             check(load(url, big.size, bigSha) == null)
         }
+        "check_report" -> {
+            // A catalog that failed while the other is current is never "all up to date".
+            check(checkReport(false, false) == CheckReport.ALL_UP_TO_DATE)
+            check(checkReport(false, true) == CheckReport.UPDATES)
+            check(checkReport(true, false) == CheckReport.FAILED_PARTLY)
+            check(checkReport(true, true) == CheckReport.UPDATES_AND_FAILED_PARTLY)
+        }
         else -> error("Unknown fixture")
     }
 }
@@ -605,6 +612,7 @@ class AdapterTests(unittest.TestCase):
     def test_icon_origin_tracks_shared_policy(self): self.scenario('icon_policy')
     def test_icon_external_origin_refused(self): self.scenario('icons')
     def test_icons_of_both_catalogs_only(self): self.scenario('icon_paths')
+    def test_a_partial_failure_is_reported_never_as_up_to_date(self): self.scenario('check_report')
 
     def test_fixed_pinned_domains_and_offline_catalog_key_default(self):
         doc = ET.parse(ROOT / 'app/src/main/res/xml/network_security_config.xml').getroot()
@@ -631,6 +639,16 @@ class AdapterTests(unittest.TestCase):
         self.assertIn('$REPO_BASE_URL/${rPackage.common.catalog.prefix}packages/', install)
         self.assertNotIn('$REPO_BASE_URL/packages/', install)
 
+
+    def test_background_checks_use_the_report(self):
+        jobs = ROOT / 'app/src/main/java/app/grapheneos/apps/autoupdate'
+        for name in ('AutoUpdateJob.kt', 'UpdateCheckJob.kt'):
+            text = (jobs / name).read_text()
+            self.assertIn('checkReport(repoUpdateError != null, ', text)
+            self.assertIn('showPartialFailure(report, repoUpdateError)', text)
+            # The only caller of "all up to date" is the branch of that report.
+            self.assertEqual(1, len(re.findall(r'(?<!fun )showAllUpToDateNotification\(\)', text)))
+            self.assertRegex(text, r'CheckReport\.ALL_UP_TO_DATE\)?\s*(?:->|\{)\s*showAllUpToDateNotification\(\)')
 
     def test_every_glide_load_takes_a_verified_url(self):
         # Nothing loads a plain URL or string any more, so every icon passes the catalog's size and SHA-256.
