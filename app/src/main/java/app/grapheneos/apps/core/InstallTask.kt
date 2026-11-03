@@ -146,7 +146,9 @@ class InstallTask(
                     launch {
                         val deltaBaseFd = obtainDeltaBaseFd(apk)
                         try {
-                            obtainAndWriteApk(apk, session, deltaBaseFd)
+                            withDeltaFallback(deltaBaseFd != null, { delta ->
+                                obtainAndWriteApk(apk, session, if (delta) deltaBaseFd else null)
+                            }, { e -> fallBackToFullApk(apk, e) })
                         } finally {
                             if (deltaBaseFd != null) {
                                 Os.close(deltaBaseFd)
@@ -304,6 +306,20 @@ class InstallTask(
             }
         }
         return result
+    }
+
+    // DiamaneOS: this task goes on with the full compressed APK, and later tasks skip deltas for this version.
+    private fun fallBackToFullApk(apk: Apk, cause: Exception) {
+        Log.w("obtainAndWriteApk", "delta unusable for ${apk.name}, falling back to full APK download", cause)
+        mainHandler.post {
+            packageState.ignoreDeltasForVersion(currentVersion!!)
+        }
+        val deltaSize = apk.deltaSizes[deltaSourceIndex]
+        val file = File(apksDir, "${apk.name}.${rPackage.availableDeltaVersions[deltaSourceIndex]}.ina")
+        // A file with the wrong hash is already gone, and all of it was counted.
+        downloadProgress.addAndGet(-(if (cause is DeltaHashException) deltaSize else file.length()))
+        file.delete()
+        downloadTotal.addAndGet(apk.compressedSize - deltaSize)
     }
 
     private suspend fun obtainAndWriteApk(apk: Apk, session: Session, deltaBaseFd: FileDescriptor?) {
@@ -473,8 +489,10 @@ class InstallTask(
         lseekToStart(compressedFd)
         if (!checkSha256(compressedFd, compressedSize, compressedSha256)) {
             File(compressedPath).delete()
-            throw GeneralSecurityException("sha256 mismatch for " +
-                        "${if (deltaBaseFd != null) "delta" else "compressed"} file for ${apk.name}")
+            if (deltaBaseFd != null) {
+                throw DeltaHashException("sha256 mismatch for delta file for ${apk.name}")
+            }
+            throw GeneralSecurityException("sha256 mismatch for compressed file for ${apk.name}")
         }
         lseekToStart(compressedFd)
 

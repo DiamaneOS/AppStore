@@ -78,6 +78,7 @@ import java.io.*
 import java.net.*
 import javax.net.ssl.*
 import org.json.JSONObject
+import java.security.GeneralSecurityException
 
 const val ICON_SHA256 = "811d6293869324c4cc8274d854f28fcbc6efcab2e4d6cddb76d54fae9f2b7fa8"
 
@@ -525,8 +526,45 @@ fun main(args: Array<String>) {
             check(checkReport(true, false) == CheckReport.FAILED_PARTLY)
             check(checkReport(true, true) == CheckReport.UPDATES_AND_FAILED_PARTLY)
         }
+        "delta_fallback" -> {
+            // One run: which attempts ran (delta or full) and how many fallbacks, or the failure that came out.
+            fun run(useDelta: Boolean, vararg failures: Exception?): String {
+                val attempts = mutableListOf<Boolean>()
+                var fallbacks = 0
+                return try {
+                    withDeltaFallback(useDelta, { delta ->
+                        attempts += delta
+                        failures.getOrNull(attempts.size - 1)?.let { throw it }
+                    }, { fallbacks++ })
+                    "$attempts $fallbacks"
+                } catch (e: Exception) {
+                    "$attempts $fallbacks " + e.javaClass.simpleName
+                }
+            }
+            val missing = try { throwResponseCodeException(FailingConnection(404)) } catch (e: ProtocolException) { e }
+            check(run(true) == "[true] 0")
+            check(run(false) == "[false] 0")
+            // A missing delta and one with the wrong hash take the full APK in the same run.
+            check(run(true, missing) == "[true, false] 1")
+            check(run(true, DeltaHashException("delta")) == "[true, false] 1")
+            // The full APK failing the same way is a real failure, and comes out once.
+            check(run(true, missing, missing) == "[true, false] 1 ProtocolException")
+            check(run(false, missing) == "[false] 0 ProtocolException")
+            // A dropped network can fail the full APK just the same, and keeps the partial delta for the retry.
+            check(run(true, SocketTimeoutException("slow")) == "[true] 0 SocketTimeoutException")
+            check(run(true, EOFException("ended early")) == "[true] 0 EOFException")
+            // A patched APK that fails its own hash is handled where it was.
+            check(run(true, GeneralSecurityException("patched")) == "[true] 0 GeneralSecurityException")
+        }
         else -> error("Unknown fixture")
     }
+}
+class FailingConnection(private val code: Int) : HttpURLConnection(URL("https://apps.diamaneos.de/grapheneos/x.ina")) {
+    override fun connect() {}
+    override fun disconnect() {}
+    override fun usingProxy() = false
+    override fun getResponseCode() = code
+    override fun getResponseMessage() = "Not Found"
 }
 '''
 
@@ -570,7 +608,7 @@ class AdapterTests(unittest.TestCase):
                 ' class Common(val catalog: Catalog)\n class Pkg(c: Catalog) { val common = Common(c); val manifestPackageName = "app.fixture"; val versionCode = 7L }\n'
                 ' val pkg = Pkg(catalog)\n val name = "base.apk"\n' + download + '\n}\n')
             kotlin = [out / p for p in ('Core.kt', 'Storage.kt', 'Harness.kt', 'IconFixture.kt', 'ApkFixture.kt')]
-            kotlin += [src / 'app/grapheneos/apps' / p for p in ('util/HttpUtils.kt', 'util/DownloadIconLoader.kt', 'util/DataStreamUtils.kt', 'core/RepoRetriever.kt', 'core/Catalogs.kt')]
+            kotlin += [src / 'app/grapheneos/apps' / p for p in ('util/HttpUtils.kt', 'util/DownloadIconLoader.kt', 'util/DataStreamUtils.kt', 'core/RepoRetriever.kt', 'core/Catalogs.kt', 'core/DeltaFallback.kt')]
             cmd = [str(cls.jdk / 'bin/java'), '-cp', str(cls.kotlin / 'lib/*'), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-kotlin-home', str(cls.kotlin), '-jvm-target', '17', '-classpath', str(out), '-d', str(out)] + [str(p) for p in kotlin]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
             if result.returncode: raise RuntimeError(result.stderr)
@@ -618,6 +656,14 @@ class AdapterTests(unittest.TestCase):
     def test_icon_external_origin_refused(self): self.scenario('icons')
     def test_icons_of_both_catalogs_only(self): self.scenario('icon_paths')
     def test_a_partial_failure_is_reported_never_as_up_to_date(self): self.scenario('check_report')
+    def test_a_missing_or_wrong_delta_takes_the_full_apk(self): self.scenario('delta_fallback')
+
+    def test_install_task_uses_the_delta_fallback(self):
+        install = (ROOT / 'app/src/main/java/app/grapheneos/apps/core/InstallTask.kt').read_text()
+        self.assertEqual(1, install.count('withDeltaFallback(deltaBaseFd != null,'))
+        self.assertEqual(1, install.count('throw DeltaHashException('))
+        # The base APK check, a failed patch and the fallback each stop deltas for this version.
+        self.assertEqual(3, install.count('packageState.ignoreDeltasForVersion(currentVersion!!)'))
 
     def test_fixed_pinned_domains_and_offline_catalog_key_default(self):
         doc = ET.parse(ROOT / 'app/src/main/res/xml/network_security_config.xml').getroot()
