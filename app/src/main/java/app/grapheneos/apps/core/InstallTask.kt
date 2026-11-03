@@ -317,6 +317,7 @@ class InstallTask(
             }
             toString()
         }
+        Log.i("obtainAndWriteApk", fileName)
         val file = File(apksDir, fileName)
         val path = file.path
         val tmpPath = "$path.tmp"
