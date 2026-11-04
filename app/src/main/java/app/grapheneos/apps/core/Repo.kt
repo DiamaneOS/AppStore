@@ -170,6 +170,11 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
                         val manifestPackageName: String,
                         json: JSONObject)
 {
+    init {
+        requireFileName(packageName)
+        requireFileName(manifestPackageName)
+    }
+
     val description = json.opt("description") as String?
     val source: PackageSource = (json.opt("source") as String?).let {
         if (it != null) {
@@ -368,7 +373,7 @@ class RPackage(val common: RPackageContainer, val versionCode: Long, val abis: A
         val list = ArrayList<Apk>(len)
 
         for (i in 0 until len) {
-            val name = names.getString(i)
+            val name = requireFileName(names.getString(i))
             val sha256 = sha256FromJsonArr(hashes, i)
             val deltaSizes = jsonArrayToLongArray(allDeltaSizes, deltasOffset, deltasOffset + numDeltas)
             val deltasSrcSha256 = Array(numDeltas) { idx ->
@@ -712,6 +717,14 @@ private fun checkPackageDep(dep: ComplexDependency, dependentManifestPkgName: St
         }
     }
     return dep.check(catalog.dependencyVersion(packageName, pi.longVersionCode))
+}
+
+// Package and APK names from the catalog name files and folders in the package cache.
+private fun requireFileName(name: String): String {
+    require(name.isNotEmpty() && name != "." && name != ".." && '/' !in name && '\u0000' !in name) {
+        "Invalid file name in the catalog"
+    }
+    return name
 }
 
 private fun sha256FromJsonArr(ja: JSONArray, idx: Int): ByteArray {
