@@ -118,6 +118,11 @@ private fun fetchInner(conn: HttpURLConnection, current: CatalogPart): CatalogPa
     // 1 byte of newline
     // 100 bytes of base64 encoded signature (its real size is 74 bytes)
     // 1 byte of newline
+    // The newlines are checked too, so a signed catalog has only one valid file.
+    val newline = '\n'.code.toByte()
+    if (unverifiedBytes[unverifiedBytes.size - 102] != newline || unverifiedBytes[unverifiedBytes.size - 1] != newline) {
+        throw GeneralSecurityException("Malformed catalog signature")
+    }
 
     val unverifiedJson: ByteArray = unverifiedBytes.copyOfRange(0, unverifiedBytes.size - 102)
     val signature: String =

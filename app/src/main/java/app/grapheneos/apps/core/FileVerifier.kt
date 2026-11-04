@@ -47,6 +47,10 @@ class FileVerifier(base64SignifyPublicKey: String) {
         if (decodedSignature.size != SIGNATURE_SIZE) {
             throw GeneralSecurityException("invalid signature size")
         }
+        // The decoder skips whitespace and unused bits, so only the canonical encoding is taken.
+        if (Base64.toBase64String(decodedSignature) != base64SignifySignature) {
+            throw GeneralSecurityException("non-canonical signature encoding")
+        }
 
         val algorithm = String(decodedSignature.copyOfRange(0, ALGORITHM_END))
         if (algorithm != ALGORITHM) {
