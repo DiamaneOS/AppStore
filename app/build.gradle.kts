@@ -45,8 +45,8 @@ android {
         targetSdk = 37
         // DiamaneOS: upstream version x 100 + DiamaneOS revision (37.1 = 3701). Always higher than
         // upstream's own numbers and only ever rising, as Android refuses a lower version as an update.
-        versionCode = 3701
-        versionName = "37.1"
+        versionCode = 3702
+        versionName = "37.2"
 
         // DiamaneOS catalog key 0, exported by the offline signer. APK signing uses a separate key.
         // A test build may supply a test key. GrapheneOS's key signs only GrapheneOS's catalog
