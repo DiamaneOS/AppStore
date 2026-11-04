@@ -550,11 +550,13 @@ fun main(args: Array<String>) {
             // The full APK failing the same way is a real failure, and comes out once.
             check(run(true, missing, missing) == "[true, false] 1 ProtocolException")
             check(run(false, missing) == "[false] 0 ProtocolException")
+            // A delta that does not patch to the right APK takes the full APK too.
+            check(run(true, DeltaPatchException(GeneralSecurityException("patched"))) == "[true, false] 1")
             // A dropped network can fail the full APK just the same, and keeps the partial delta for the retry.
             check(run(true, SocketTimeoutException("slow")) == "[true] 0 SocketTimeoutException")
             check(run(true, EOFException("ended early")) == "[true] 0 EOFException")
-            // A patched APK that fails its own hash is handled where it was.
-            check(run(true, GeneralSecurityException("patched")) == "[true] 0 GeneralSecurityException")
+            // The full APK failing its own hash is a real failure.
+            check(run(true, GeneralSecurityException("full")) == "[true] 0 GeneralSecurityException")
         }
         else -> error("Unknown fixture")
     }
@@ -662,8 +664,9 @@ class AdapterTests(unittest.TestCase):
         install = (ROOT / 'app/src/main/java/app/grapheneos/apps/core/InstallTask.kt').read_text()
         self.assertEqual(1, install.count('withDeltaFallback(deltaBaseFd != null,'))
         self.assertEqual(1, install.count('throw DeltaHashException('))
-        # The base APK check, a failed patch and the fallback each stop deltas for this version.
-        self.assertEqual(3, install.count('packageState.ignoreDeltasForVersion(currentVersion!!)'))
+        self.assertEqual(1, install.count('throw DeltaPatchException('))
+        # The base APK check and the fallback each stop deltas for this version.
+        self.assertEqual(2, install.count('packageState.ignoreDeltasForVersion(currentVersion!!)'))
 
     def test_fixed_pinned_domains_and_offline_catalog_key_default(self):
         doc = ET.parse(ROOT / 'app/src/main/res/xml/network_security_config.xml').getroot()

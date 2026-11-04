@@ -509,11 +509,8 @@ class InstallTask(
                     }
                 } catch (e: Exception) {
                     when (e) {
-                        is ErrnoException, is GeneralSecurityException, is IOException -> {
-                            mainHandler.post {
-                                packageState.ignoreDeltasForVersion(currentVersion!!)
-                            }
-                        }
+                        // DiamaneOS: the cached delta is good by hash and bad by result, so it goes too.
+                        is ErrnoException, is GeneralSecurityException, is IOException -> throw DeltaPatchException(e)
                     }
                     throw e
                 }
