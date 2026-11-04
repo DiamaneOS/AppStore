@@ -1,0 +1,24 @@
+[package]
+name = "ina-host-jni"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# The real JNI glue of ina, built for the host so the JVM harness calls the same native code.
+[lib]
+name = "ina_host"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+brotli = "=9.1.1"
+brotli-decompressor = "=6.2.0"
+zstd = { version = "=0.14.3", default-features = false }
+jni-sys = "=0.4.1"
+
+[dependencies.ina]
+path = "../../../ina/ina"
+default-features = false
+features = ["diff", "java-ffi", "patch"]
+
+[workspace]
