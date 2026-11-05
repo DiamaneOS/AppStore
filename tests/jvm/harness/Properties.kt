@@ -10,6 +10,7 @@ import app.grapheneos.apps.core.InstallTask
 import app.grapheneos.apps.core.PackageState
 import app.grapheneos.apps.core.ReleaseChannel
 import app.grapheneos.apps.core.Repo
+import app.grapheneos.apps.core.canSendETag
 import app.grapheneos.apps.core.withDeltaFallback
 import app.grapheneos.apps.util.AtomicFile2
 import de.diamaneos.downloads.DownloadTransport
@@ -43,6 +44,7 @@ fun main(args: Array<String>) {
         "channels_and_versions" to ::channelsAndVersions,
         "cache_file_corruption" to ::cacheFileCorruption,
         "transport_bounds" to ::transportBounds,
+        "etag_bad_values_recover" to ::etagBadValuesRecover,
         "delta_fallback_unit" to ::deltaFallbackUnit,
     )
     for (name in args.ifEmpty { all.keys.toTypedArray() }) {
@@ -349,6 +351,41 @@ fun cacheFileCorruption(): Int {
             throw AssertionError("a damaged cache file stops the start: $e", e)
         }
         n++
+    }
+    return n
+}
+
+// A normal ETag goes back to the server. A bad one is not sent, whether it just came from the server or
+// from the cache after a restart, and the next full fetch replaces it.
+fun etagBadValuesRecover(): Int {
+    val good = "W/\"6a1b-5\""
+    val bad = listOf("\"a\u0001b\"", "a\u007f", "a\nb", "a\r\nb", "\u0000", "\u00e9")
+    for (e in listOf("", good, "\"a\tb\"", "x".repeat(200))) check(canSendETag(e)) { "'$e' is not sent" }
+    for (e in bad) check(!canSendETag(e)) { "'$e' is sent" }
+    // The other catalog is not served, so a fetch always reports that failure. What counts is our catalog's time and request.
+    Harness.reset()
+    Harness.serveCatalog(TestKey.frame(ourCatalog(minTime + 1)), etag = good)
+    var repo = Harness.fetch(Harness.cached()).first
+    check(Harness.ourTime(repo) == minTime + 1) { "first fetch" }
+    repo = Harness.fetch(repo).first
+    check(FakeServer.sentETags.last() == good) { "normal ETag: sent ${FakeServer.sentETags}" }
+    var n = 2
+    for (e in bad) {
+        for (restart in listOf(false, true)) {
+            Harness.reset()
+            Harness.serveCatalog(TestKey.frame(ourCatalog(minTime + 1)), etag = e)
+            repo = Harness.fetch(Harness.cached()).first
+            check(Harness.ourTime(repo) == minTime + 1) { "taking the catalog with ETag '$e'" }
+            if (restart) repo = Harness.cached()
+            Harness.serveCatalog(TestKey.frame(ourCatalog(minTime + 2)), etag = good)
+            val before = FakeServer.sentETags.size
+            repo = Harness.fetch(repo).first
+            check(FakeServer.sentETags.size > before && FakeServer.sentETags.last() == null) { "ETag '$e', restart $restart: sent ${FakeServer.sentETags}" }
+            check(Harness.ourTime(repo) == minTime + 2) { "ETag '$e', restart $restart: the new catalog was not taken" }
+            repo = Harness.fetch(repo).first
+            check(FakeServer.sentETags.last() == good) { "after ETag '$e': sent ${FakeServer.sentETags}" }
+            n += 3
+        }
     }
     return n
 }

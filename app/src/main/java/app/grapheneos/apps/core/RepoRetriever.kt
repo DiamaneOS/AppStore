@@ -80,7 +80,7 @@ private fun fetchCatalog(part: CatalogPart): CatalogPart {
 
     return if (!part.isDummy) {
         openConnection(null, url) {
-            setRequestProperty("If-None-Match", part.eTag)
+            if (canSendETag(part.eTag)) setRequestProperty("If-None-Match", part.eTag)
         }.use { conn ->
             when (conn.v.responseCode) {
                 HTTP_OK -> {
@@ -102,6 +102,11 @@ private fun fetchCatalog(part: CatalogPart): CatalogPart {
         }
     }
 }
+
+// The ETag comes from the network and isn't signed. Android's HTTP stack refuses a control character
+// in a request header, and a stored one would fail every later check of this catalog. Without it the
+// next check is a full fetch, which stores the new value.
+internal fun canSendETag(eTag: String) = eTag.all { it == '\t' || it in ' '..'~' }
 
 private fun fetchInner(conn: HttpURLConnection, current: CatalogPart): CatalogPart {
     val catalog = current.catalog

@@ -20,10 +20,12 @@ object FakeServer {
 
     val replies = ConcurrentHashMap<String, Reply>()
     val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())
+    val sentETags: MutableList<String?> = Collections.synchronizedList(mutableListOf())
 
     fun reset() {
         replies.clear()
         requests.clear()
+        sentETags.clear()
     }
 
     fun install() {
@@ -43,12 +45,19 @@ object FakeServer {
         fun start() = getRequestProperty("Range")?.removePrefix("bytes=")?.removeSuffix("-")?.toLongOrNull() ?: 0L
         val ranged get() = start() > 0 && reply.honorRange && reply.code == 200
 
+        // As Android's HTTP stack, unlike the JVM's: a control character in a header value is refused.
+        override fun setRequestProperty(key: String, value: String) {
+            require(value.none { (it <= '\u001f' && it != '\t') || it == '\u007f' }) { "Unexpected char in header value" }
+            super.setRequestProperty(key, value)
+        }
+
         override fun connect() { connected = true }
         override fun disconnect() {}
         override fun usingProxy() = false
         override fun getResponseCode(): Int {
             check(!instanceFollowRedirects)
             requests += "$requestMethod ${url.path} ${getRequestProperty("Range") ?: ""}"
+            if (url.path == "/metadata.1.0.sjson") sentETags += getRequestProperty("If-None-Match")
             if (requestMethod == "HEAD") return 200
             val r = reply
             if (ranged) return if (start() >= r.body.size) 416 else 206

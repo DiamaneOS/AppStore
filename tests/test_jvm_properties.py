@@ -15,7 +15,7 @@ import build  # noqa: E402
 PROPERTIES = [
     'signed_catalog_byte_changes', 'catalog_signature_and_rollback_model', 'catalog_paths_stay_in_the_app',
     'delta_failures_fall_back', 'full_apk_failures_never_install', 'wrong_bytes_never_install',
-    'channels_and_versions', 'cache_file_corruption', 'transport_bounds', 'delta_fallback_unit',
+    'channels_and_versions', 'cache_file_corruption', 'transport_bounds', 'etag_bad_values_recover', 'delta_fallback_unit',
 ]
 
 
