@@ -20,6 +20,20 @@ val DIAMANEOS_SIGNERS = setOf(
 // Our builds that replace GrapheneOS's. GrapheneOS's catalog never lists them.
 val DIAMANEOS_PACKAGES = setOf("app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor")
 
+// Other makers' apps our catalog offers, each by its exact name bound to its one signer (SHA-256 of
+// the certificate). Only that signer is accepted for that name, and only from our catalog. Every other
+// entry of ours needs one of our signers.
+// - com.fps.camera: Fairphone's own camera app, signed by TCL. It needs the FP6's camera algorithm service,
+//   so its versions list the feature de.diamaneos.fairphone_camera that only OS builds with that service
+//   declare. The OS runs it without network access.
+val PINNED_PACKAGES = mapOf(
+    "com.fps.camera" to "0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470",
+)
+
+// Whether our catalog's entry for this name may carry this signer.
+fun allowedSigner(name: String, signer: String): Boolean =
+    PINNED_PACKAGES[name]?.let { it == signer } ?: (signer in DIAMANEOS_SIGNERS)
+
 // GrapheneOS's apps we never list. Info shows GrapheneOS's release news, and our Auditor replaces its Auditor.
 val EXCLUDED_PACKAGES = setOf("app.grapheneos.info", "app.attestation.auditor")
 
@@ -77,17 +91,18 @@ fun listedEntries(entries: List<CatalogEntry>, grapheneOSMissing: Boolean): List
         .flatMap { listOfNotNull(it.name, it.originalPackage) }.map { it.lowercase() }.toSet()
     return listed.filter {
         it.catalog == Catalog.GrapheneOS || (it.name.lowercase() !in grapheneOS && it.signers.size == 1
-            && it.signers[0] in DIAMANEOS_SIGNERS
-            && (!grapheneOSMissing || it.name in DIAMANEOS_PACKAGES || inDiamaneOSNamespace(it.name)))
+            && allowedSigner(it.name, it.signers[0])
+            && (!grapheneOSMissing || it.name in DIAMANEOS_PACKAGES || it.name in PINNED_PACKAGES
+                || inDiamaneOSNamespace(it.name)))
     }
 }
 
-// Before install, an APK from our catalog must have one signer, without rotation, that is ours and
-// listed in its entry.
-fun checkDiamaneOSSigner(name: String, info: SigningInfo?, listed: Array<ByteArray>) {
+// Before install, an APK from our catalog must have one signer, without rotation, that its package
+// may carry (allowedSigner) and that is listed in its entry.
+fun checkDiamaneOSSigner(name: String, packageName: String, info: SigningInfo?, listed: Array<ByteArray>) {
     val signers = info?.takeIf { !it.hasMultipleSigners() && !it.hasPastSigningCertificates() }?.apkContentsSigners
     val digest = signers?.singleOrNull()?.let { MessageDigest.getInstance("SHA-256").digest(it.toByteArray()) }
-    if (digest == null || digest.joinToString("") { "%02x".format(it) } !in DIAMANEOS_SIGNERS
+    if (digest == null || !allowedSigner(packageName, digest.joinToString("") { "%02x".format(it) })
         || listed.none { it.contentEquals(digest) }) {
         throw GeneralSecurityException("$name is not signed by its DiamaneOS signer")
     }

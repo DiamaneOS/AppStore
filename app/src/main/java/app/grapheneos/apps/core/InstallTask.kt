@@ -527,12 +527,13 @@ class InstallTask(
 
             lseekToStart(uncompressedFd.v)
 
-            // DiamaneOS: each APK from our catalog must carry one of our signers (Catalogs.kt).
+            // DiamaneOS: each APK from our catalog must carry the signer its package may have (Catalogs.kt).
             if (apk.pkg.common.catalog == Catalog.DiamaneOS) {
                 uncompressedFd.dupToPfd().use {
                     val pkgInfo = pkgManager.getPackageArchiveInfo("/proc/self/fd/${it.getFd()}",
                         PackageManager.GET_SIGNING_CERTIFICATES.toLong())
-                    checkDiamaneOSSigner(apk.name, pkgInfo?.signingInfo, apk.pkg.common.validCertDigests)
+                    checkDiamaneOSSigner(apk.name, apk.pkg.common.packageName, pkgInfo?.signingInfo,
+                        apk.pkg.common.validCertDigests)
                 }
                 lseekToStart(uncompressedFd.v)
             }

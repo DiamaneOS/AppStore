@@ -244,6 +244,13 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
                 continue
             }
 
+            // DiamaneOS: a variant that lists system features is offered only on an OS build that declares
+            // all of them, for apps that need the OS's own parts (the FP6's Fairphone Camera).
+            val features = jo.optJSONArray("features")?.asStringList()
+            if (features != null && features.any { maybeGetSystemFeatureInfo(it) == null }) {
+                continue
+            }
+
             val abis = jo.optJSONArray("abis")?.asStringList()
             if (abis != null) {
                 // intentionally don't support secondary ABIs

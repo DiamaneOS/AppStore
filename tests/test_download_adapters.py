@@ -254,6 +254,16 @@ fun main(args: Array<String>) {
             }
             check(listed(our("de.diamaneos.camera.processor"), our("org.example.other"), missing = true) == listOf(Catalog.DiamaneOS to "de.diamaneos.camera.processor"))
             check(DIAMANEOS_SIGNERS.size == 3)
+            // A pinned maker's app: listed only with its own signer, from our catalog, also while GrapheneOS's
+            // catalog is missing. Its signer counts for no other name, and ours do not count for it.
+            val tcl = PINNED_PACKAGES.getValue("com.fps.camera")
+            check(PINNED_PACKAGES == mapOf("com.fps.camera" to "0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470"))
+            check(listed(our("com.fps.camera", listOf(tcl))) == listOf(Catalog.DiamaneOS to "com.fps.camera"))
+            check(listed(our("com.fps.camera", listOf(tcl)), missing = true) == listOf(Catalog.DiamaneOS to "com.fps.camera"))
+            check(listed(our("com.fps.camera"), our("com.fps.camera", listOf(tcl, ours)), our("com.fps.camera", listOf(tcl.uppercase())),
+                our("com.fps.camera", listOf(tcl), source = "Fairphone"), our("Com.Fps.Camera", listOf(tcl)),
+                our("com.fps.camera.other", listOf(tcl)), our("de.diamaneos.future", listOf(tcl))).isEmpty())
+            check(allowedSigner("com.fps.camera", tcl) && !allowedSigner("com.fps.camera", ours) && !allowedSigner("app.grapheneos.apps", tcl))
             // A name GrapheneOS's catalog lists, in any case or as the name it updates, stays GrapheneOS's.
             check(listed(their("app.vanadium.browser", "org.chromium.chrome"), our("app.vanadium.browser"), our("App.Vanadium.Browser"),
                 our("org.chromium.chrome")) == listOf(Catalog.GrapheneOS to "app.vanadium.browser"))
@@ -292,10 +302,10 @@ fun main(args: Array<String>) {
             fun info(vararg c: ByteArray, multiple: Boolean = false, past: Boolean = false) =
                 android.content.pm.SigningInfo(c.map { android.content.pm.Signature(it) }.toTypedArray(), multiple, past)
             fun refused(info: android.content.pm.SigningInfo?, listed: Array<ByteArray>) =
-                try { checkDiamaneOSSigner("base.apk", info, listed);false } catch (e: java.security.GeneralSecurityException) { true }
+                try { checkDiamaneOSSigner("base.apk", "app.grapheneos.apps", info, listed);false } catch (e: java.security.GeneralSecurityException) { true }
             for (i in certificates.indices) {
-                checkDiamaneOSSigner("base.apk", info(certificates[i]), arrayOf(digests[i]))
-                checkDiamaneOSSigner("base.apk", info(certificates[i]), digests.toTypedArray())
+                checkDiamaneOSSigner("base.apk", "app.grapheneos.apps", info(certificates[i]), arrayOf(digests[i]))
+                checkDiamaneOSSigner("base.apk", "app.grapheneos.apps", info(certificates[i]), digests.toTypedArray())
                 // One of ours, but not the one the entry lists.
                 check(refused(info(certificates[i]), arrayOf(digests[(i + 1) % 3])))
             }
