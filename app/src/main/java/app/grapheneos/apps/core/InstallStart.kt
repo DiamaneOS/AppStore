@@ -21,7 +21,9 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.lang.reflect.Method
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -108,13 +110,25 @@ private fun startInstallTaskInner(pkgs: List<RPackage>, params: InstallParams,
 
     val resConfig = appResources.configuration
 
+    val packageNames = pkgs.map { it.packageName }
+
+    // DiamaneOS: committing our own update ends our process, which stops the installs it still runs.
+    // So it waits for all of them, however it was started (one app, all updates, auto-update).
+    val beforeCommit: (suspend () -> Unit)? = if (selfPkgName in packageNames) {
+        suspend {
+            callbackBeforeCommit?.invoke()
+            awaitOtherInstalls(packageNames)
+        }
+    } else {
+        callbackBeforeCommit
+    }
+
     val tasks: List<InstallTask> = pkgs.map { pkg ->
         val apks = pkg.collectNeededApks(resConfig)
-        InstallTask(pkg, PackageStates.getPackageState(pkg.packageName), apks, params, callbackBeforeCommit)
+        InstallTask(pkg, PackageStates.getPackageState(pkg.packageName), apks, params, beforeCommit)
     }
 
     val isAddedToListOfBusyPackages = AtomicBoolean()
-    val packageNames = pkgs.map { it.packageName }
 
     val deferred: Deferred<Deferred<PackageInstallerError?>> = CoroutineScope(Dispatchers.IO).async {
         updateListOfBusyPackages(true, packageNames)
@@ -198,6 +212,25 @@ private fun handleInstallTaskError(tasks: List<InstallTask>, throwable: Throwabl
             setContentText(tasks.map { it.rPackage.label }.joinToString())
             setContentIntent(DetailsScreen.createPendingIntent(tasks.last().rPackage.packageName))
         }
+    }
+}
+
+// DiamaneOS: waits until no package outside [own] is installing, installs started meanwhile included.
+// A session that waits for the user's confirmation is left out: the OS finishes it without us, and
+// the user may never answer.
+private suspend fun awaitOtherInstalls(own: List<String>) {
+    val TAG = "SelfUpdate"
+    while (true) {
+        val others = withContext(Dispatchers.Main) {
+            PackageStates.map.values.filter {
+                it.pkgName !in own && it.isInstalling() && !it.waitingForPendingUserAction
+            }.map { it.pkgName }
+        }
+        if (others.isEmpty()) {
+            return
+        }
+        Log.d(TAG, "waiting for ${others.joinToString()} before committing self-update session")
+        delay(1000)
     }
 }
 
