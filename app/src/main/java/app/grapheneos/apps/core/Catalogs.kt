@@ -1,5 +1,6 @@
 package app.grapheneos.apps.core
 
+import android.content.pm.Signature
 import android.content.pm.SigningInfo
 import app.grapheneos.apps.BuildConfig
 import org.json.JSONObject
@@ -20,19 +21,24 @@ val DIAMANEOS_SIGNERS = setOf(
 // Our builds that replace GrapheneOS's. GrapheneOS's catalog never lists them.
 val DIAMANEOS_PACKAGES = setOf("app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor")
 
-// Other makers' apps our catalog offers, each by its exact name bound to its one signer (SHA-256 of
-// the certificate). Only that signer is accepted for that name, and only from our catalog. Every other
-// entry of ours needs one of our signers.
-// - com.fps.camera: Fairphone's own camera app, signed by TCL. It needs the FP6's camera algorithm service,
-//   so its versions list the feature de.diamaneos.fairphone_camera that only OS builds with that service
-//   declare. The OS runs it without network access.
+// Other makers' apps our catalog offers, each by its exact name bound to its signer lineage: the SHA-256
+// of each certificate the maker's key has had, oldest first. Only a signer of that lineage is accepted for
+// that name, and only from our catalog. Every other entry of ours needs one of our signers.
+// - com.fps.camera: Fairphone's own camera app, signed by TCL, whose key was rotated once. Its APK is signed
+//   with the second certificate and carries both as its certificate history. It needs the FP6's camera
+//   algorithm service, so its versions list features that only OS builds with that service declare. The OS
+//   runs it without network access.
 val PINNED_PACKAGES = mapOf(
-    "com.fps.camera" to "0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470",
+    "com.fps.camera" to listOf(
+        "0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470",
+        "228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852",
+    ),
 )
 
-// Whether our catalog's entry for this name may carry this signer.
+// Whether our catalog's entry for this name may carry this signer. The entry lists the certificate that
+// signs the APK, which for a pinned name is one of its lineage.
 fun allowedSigner(name: String, signer: String): Boolean =
-    PINNED_PACKAGES[name]?.let { it == signer } ?: (signer in DIAMANEOS_SIGNERS)
+    PINNED_PACKAGES[name]?.contains(signer) ?: (signer in DIAMANEOS_SIGNERS)
 
 // GrapheneOS's apps we never list. Info shows GrapheneOS's release news, and our Auditor replaces its Auditor.
 val EXCLUDED_PACKAGES = setOf("app.grapheneos.info", "app.attestation.auditor")
@@ -97,12 +103,26 @@ fun listedEntries(entries: List<CatalogEntry>, grapheneOSMissing: Boolean): List
     }
 }
 
-// Before install, an APK from our catalog must have one signer, without rotation, that its package
-// may carry (allowedSigner) and that is listed in its entry.
+// Before install, an APK from our catalog must have one signer that its package may carry (allowedSigner)
+// and that is listed in its entry. Our own APKs have no rotation. A pinned maker's APK may carry past
+// certificates: then its certificate history must be the pinned lineage up to its signer, in that order
+// and nothing else. SigningInfo.apkContentsSigners is the certificate that signs the APK, and
+// signingCertificateHistory is the rotation record, oldest first, which ends with that certificate.
 fun checkDiamaneOSSigner(name: String, packageName: String, info: SigningInfo?, listed: Array<ByteArray>) {
-    val signers = info?.takeIf { !it.hasMultipleSigners() && !it.hasPastSigningCertificates() }?.apkContentsSigners
-    val digest = signers?.singleOrNull()?.let { MessageDigest.getInstance("SHA-256").digest(it.toByteArray()) }
-    if (digest == null || !allowedSigner(packageName, digest.joinToString("") { "%02x".format(it) })
+    fun sha256(signature: Signature) = MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+    fun hex(digest: ByteArray) = digest.joinToString("") { "%02x".format(it) }
+    val digest = info?.takeIf { !it.hasMultipleSigners() }?.apkContentsSigners?.singleOrNull()?.let { sha256(it) }
+    val signer = digest?.let { hex(it) }
+    val historyAllowed = when {
+        info == null || signer == null -> false
+        !info.hasPastSigningCertificates() -> true
+        else -> {
+            val lineage = PINNED_PACKAGES[packageName]
+            val position = lineage?.indexOf(signer) ?: -1
+            position >= 0 && info.signingCertificateHistory?.map { hex(sha256(it)) } == lineage?.subList(0, position + 1)
+        }
+    }
+    if (digest == null || signer == null || !allowedSigner(packageName, signer) || !historyAllowed
         || listed.none { it.contentEquals(digest) }) {
         throw GeneralSecurityException("$name is not signed by its DiamaneOS signer")
     }

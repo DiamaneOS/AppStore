@@ -22,8 +22,11 @@ JAVA = {
     'android/content/ContentResolver.java': 'package android.content; public class ContentResolver {\n        public android.database.Cursor query(android.net.Uri uri,String[] p,String w,String[] a,String o){\n            if(!uri.value.equals("content://settings/global/diamaneos_download_server_policy"))throw new AssertionError();\n            if(android.provider.Settings.Global.deny)throw new SecurityException("Authority fixture refusal");\n            if(android.provider.Settings.Global.unavailable)return null; return new android.database.Cursor();} }',
     'android/content/pm/Signature.java': 'package android.content.pm; public class Signature { final byte[] b; public Signature(byte[] b){this.b=b;} public byte[] toByteArray(){return b.clone();} }',
     'android/content/pm/SigningInfo.java': '''package android.content.pm; public class SigningInfo {
-        final Signature[] s; final boolean multiple, past; public SigningInfo(Signature[] s,boolean multiple,boolean past){this.s=s;this.multiple=multiple;this.past=past;}
-        public boolean hasMultipleSigners(){return multiple;} public boolean hasPastSigningCertificates(){return past;} public Signature[] getApkContentsSigners(){return s;} }''',
+        final Signature[] s, history; final boolean multiple, past; public SigningInfo(Signature[] s,boolean multiple,boolean past){this(s,multiple,past,past?s:null);}
+        public SigningInfo(Signature[] s,boolean multiple,boolean past,Signature[] history){this.s=s;this.multiple=multiple;this.past=past;this.history=history;}
+        public boolean hasMultipleSigners(){return multiple;} public boolean hasPastSigningCertificates(){return past;} public Signature[] getApkContentsSigners(){return s;}
+        // As Android: null with several signers, the signers without a rotation record, else the record, oldest first.
+        public Signature[] getSigningCertificateHistory(){return multiple?null:past?history:s;} }''',
     'android/content/ComponentName.java': 'package android.content; public class ComponentName { public ComponentName(String p,String c){} }',
     'android/content/Intent.java': 'package android.content; public class Intent { public Intent(String a){} public Intent setComponent(ComponentName c){return this;} }',
     'org/grapheneos/tls/ModernTLSSocketFactory.java': '''package org.grapheneos.tls; public class ModernTLSSocketFactory extends javax.net.ssl.SSLSocketFactory {
@@ -256,8 +259,16 @@ fun main(args: Array<String>) {
             check(DIAMANEOS_SIGNERS.size == 3)
             // A pinned maker's app: listed only with its own signer, from our catalog, also while GrapheneOS's
             // catalog is missing. Its signer counts for no other name, and ours do not count for it.
-            val tcl = PINNED_PACKAGES.getValue("com.fps.camera")
-            check(PINNED_PACKAGES == mapOf("com.fps.camera" to "0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470"))
+            // The pin is the maker's signer lineage, oldest first. The entry lists the certificate that signs the APK.
+            val lineage = PINNED_PACKAGES.getValue("com.fps.camera")
+            val tcl = lineage.last()
+            check(PINNED_PACKAGES == mapOf("com.fps.camera" to listOf("0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470",
+                "228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852")))
+            // Either certificate of the lineage, alone. Not both, and not one beside another signer.
+            for (signer in lineage) check(listed(our("com.fps.camera", listOf(signer))) == listOf(Catalog.DiamaneOS to "com.fps.camera"))
+            check(listed(our("com.fps.camera", lineage), our("com.fps.camera", lineage.reversed()), our("com.fps.camera", listOf(lineage.first(), ours))).isEmpty())
+            for (signer in lineage) check(allowedSigner("com.fps.camera", signer) && !allowedSigner("app.grapheneos.apps", signer)
+                && !allowedSigner("com.fps.camera.other", signer) && !allowedSigner("de.diamaneos.future", signer))
             check(listed(our("com.fps.camera", listOf(tcl))) == listOf(Catalog.DiamaneOS to "com.fps.camera"))
             check(listed(our("com.fps.camera", listOf(tcl)), missing = true) == listOf(Catalog.DiamaneOS to "com.fps.camera"))
             check(listed(our("com.fps.camera"), our("com.fps.camera", listOf(tcl, ours)), our("com.fps.camera", listOf(tcl.uppercase())),
@@ -295,7 +306,7 @@ fun main(args: Array<String>) {
         }
         "signers" -> {
             // The APK check, with our three public certificates in the order of DIAMANEOS_SIGNERS.
-            val certificates = args.drop(1).map { File(it).readBytes() }
+            val certificates = args.drop(1).take(3).map { File(it).readBytes() }
             check(certificates.size == 3)
             val digests = certificates.map { java.security.MessageDigest.getInstance("SHA-256").digest(it) }
             check(digests.map { d -> d.joinToString("") { "%02x".format(it) } } == DIAMANEOS_SIGNERS.toList())
@@ -317,6 +328,46 @@ fun main(args: Array<String>) {
             check(refused(info(certificates[0], certificates[1]), digests.toTypedArray()))
             check(refused(info(certificates[0], multiple = true), digests.toTypedArray()))
             check(refused(info(certificates[0], past = true), digests.toTypedArray()))
+            // A pinned maker's APK, with the two public certificates of TCL's lineage, oldest first.
+            val tcl = args.drop(4).map { File(it).readBytes() }
+            val tclDigests = tcl.map { java.security.MessageDigest.getInstance("SHA-256").digest(it) }
+            val name = "com.fps.camera"
+            check(tclDigests.map { d -> d.joinToString("") { "%02x".format(it) } } == PINNED_PACKAGES.getValue(name))
+            fun rotated(signer: ByteArray, vararg history: ByteArray) = android.content.pm.SigningInfo(arrayOf(android.content.pm.Signature(signer)),
+                false, true, history.map { android.content.pm.Signature(it) }.toTypedArray())
+            fun pinnedRefused(info: android.content.pm.SigningInfo?, listed: Array<ByteArray>, packageName: String = name) =
+                try { checkDiamaneOSSigner("base.apk", packageName, info, listed);false } catch (e: java.security.GeneralSecurityException) { true }
+            // The APK as Fairphone ships it: signed with the second certificate, its history the whole lineage.
+            checkDiamaneOSSigner("base.apk", name, rotated(tcl[1], tcl[0], tcl[1]), arrayOf(tclDigests[1]))
+            // Signed with a pinned certificate and no history, or with the first and a history of only itself.
+            for (i in tcl.indices) checkDiamaneOSSigner("base.apk", name, info(tcl[i]), arrayOf(tclDigests[i]))
+            checkDiamaneOSSigner("base.apk", name, rotated(tcl[0], tcl[0]), arrayOf(tclDigests[0]))
+            // The entry must list the certificate that signs the APK, not another of the lineage.
+            check(pinnedRefused(rotated(tcl[1], tcl[0], tcl[1]), arrayOf(tclDigests[0])))
+            check(pinnedRefused(info(tcl[0]), arrayOf(tclDigests[1])))
+            // Any other history: reversed, cut short, without the older certificate, with another certificate
+            // before, between or after, the lineage repeated, or none while the APK says it has one.
+            for (history in listOf(listOf(tcl[1], tcl[0]), listOf(tcl[0]), listOf(tcl[1]), listOf(other, tcl[0], tcl[1]),
+                    listOf(tcl[0], other, tcl[1]), listOf(tcl[0], tcl[1], other), listOf(certificates[0], tcl[1]),
+                    listOf(tcl[0], tcl[1], tcl[0], tcl[1]), emptyList())) {
+                check(pinnedRefused(rotated(tcl[1], *history.toTypedArray()), arrayOf(tclDigests[1])))
+            }
+            check(pinnedRefused(rotated(tcl[0], tcl[0], tcl[1]), arrayOf(tclDigests[0])))
+            check(pinnedRefused(android.content.pm.SigningInfo(arrayOf(android.content.pm.Signature(tcl[1])), false, true, null), arrayOf(tclDigests[1])))
+            // Another signer with the pinned history, one of ours, two signers, several signers, none.
+            check(pinnedRefused(rotated(other, tcl[0], tcl[1]), arrayOf(otherDigest)))
+            check(pinnedRefused(rotated(other, tcl[0], tcl[1], other), arrayOf(otherDigest)))
+            check(pinnedRefused(info(certificates[0]), arrayOf(digests[0])))
+            check(pinnedRefused(info(tcl[0], tcl[1]), tclDigests.toTypedArray()))
+            check(pinnedRefused(info(tcl[1], multiple = true), arrayOf(tclDigests[1])))
+            check(pinnedRefused(null, tclDigests.toTypedArray()) && pinnedRefused(info(), tclDigests.toTypedArray()))
+            // The lineage counts for the pinned name only. Our packages take no rotation, with any history.
+            for (packageName in listOf("app.grapheneos.apps", "com.fps.camera.other", "Com.Fps.Camera", "de.diamaneos.future")) {
+                check(pinnedRefused(rotated(tcl[1], tcl[0], tcl[1]), arrayOf(tclDigests[1]), packageName))
+                check(pinnedRefused(info(tcl[1]), arrayOf(tclDigests[1]), packageName))
+            }
+            check(refused(android.content.pm.SigningInfo(arrayOf(android.content.pm.Signature(certificates[0])), false, true,
+                arrayOf(android.content.pm.Signature(certificates[0]))), digests.toTypedArray()))
         }
         "parse_isolation" -> {
             // A signed GrapheneOS catalog this App Store cannot parse keeps our catalog's update and is not cached.
@@ -644,8 +695,9 @@ class AdapterTests(unittest.TestCase):
     def test_apk_paths_follow_the_catalog(self): self.scenario('apk_paths')
 
     def test_our_apks_need_our_listed_signer(self):
-        # tests/signers.pem: the public App Store, Camera and Auditor certificates.
-        pem = (ROOT / 'tests/signers.pem').read_text()
+        # tests/signers.pem: the public App Store, Camera and Auditor certificates. tests/pinned-signers.pem: the two
+        # public certificates of TCL's lineage for com.fps.camera, oldest first.
+        pem = (ROOT / 'tests/signers.pem').read_text() + (ROOT / 'tests/pinned-signers.pem').read_text()
         paths = []
         for i, block in enumerate(re.findall(r'-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----', pem, re.S)):
             paths.append(Path(self.tmp.name) / f'signer{i}.der')
