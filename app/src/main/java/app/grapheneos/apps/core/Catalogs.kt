@@ -40,6 +40,18 @@ val PINNED_PACKAGES = mapOf(
 fun allowedSigner(name: String, signer: String): Boolean =
     PINNED_PACKAGES[name]?.contains(signer) ?: (signer in DIAMANEOS_SIGNERS)
 
+// The source line the App Store shows for a pinned maker's app, as the name of a PackageSource. Our catalog
+// lists the app with source DiamaneOS, the only value earlier App Store versions take from it, so the line is
+// given here. No catalog may name such a source itself.
+val PINNED_PACKAGE_SOURCES = mapOf("com.fps.camera" to "Fairphone")
+
+// The PackageSource name of an entry: the pinned maker's for its package in our catalog, else the one the
+// catalog names, or null when it names none.
+fun sourceName(catalog: Catalog, packageName: String, named: String?): String? {
+    require(named !in PINNED_PACKAGE_SOURCES.values) { "a catalog may not name the source $named" }
+    return if (catalog == Catalog.DiamaneOS) PINNED_PACKAGE_SOURCES[packageName] ?: named else named
+}
+
 // GrapheneOS's apps we never list. Info shows GrapheneOS's release news, and our Auditor replaces its Auditor.
 val EXCLUDED_PACKAGES = setOf("app.grapheneos.info", "app.attestation.auditor")
 

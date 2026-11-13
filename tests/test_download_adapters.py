@@ -275,6 +275,19 @@ fun main(args: Array<String>) {
                 our("com.fps.camera", listOf(tcl), source = "Fairphone"), our("Com.Fps.Camera", listOf(tcl)),
                 our("com.fps.camera.other", listOf(tcl)), our("de.diamaneos.future", listOf(tcl))).isEmpty())
             check(allowedSigner("com.fps.camera", tcl) && !allowedSigner("com.fps.camera", ours) && !allowedSigner("app.grapheneos.apps", tcl))
+            // The source line of a pinned maker's app comes from the App Store, for that package in our catalog only.
+            check(PINNED_PACKAGE_SOURCES == mapOf("com.fps.camera" to "Fairphone") && PINNED_PACKAGE_SOURCES.keys == PINNED_PACKAGES.keys)
+            check(sourceName(Catalog.DiamaneOS, "com.fps.camera", "DiamaneOS") == "Fairphone")
+            for (name in DIAMANEOS_PACKAGES + "de.diamaneos.camera.processor" + "com.fps.camera.other" + "Com.Fps.Camera") {
+                check(sourceName(Catalog.DiamaneOS, name, "DiamaneOS") == "DiamaneOS")
+            }
+            // GrapheneOS's catalog keeps the source it names for every name, and none stays none.
+            check(sourceName(Catalog.GrapheneOS, "com.fps.camera", "GrapheneOS") == "GrapheneOS" && sourceName(Catalog.GrapheneOS, "com.fps.camera", null) == null)
+            check(sourceName(Catalog.GrapheneOS, "app.vanadium.browser", "Google") == "Google" && sourceName(Catalog.DiamaneOS, "app.grapheneos.apps", null) == null)
+            // No catalog names the maker's source itself, for any package.
+            for (catalog in Catalog.entries) for (name in listOf("com.fps.camera", "app.example.other")) {
+                check(try { sourceName(catalog, name, "Fairphone"); false } catch (e: IllegalArgumentException) { true })
+            }
             // A name GrapheneOS's catalog lists, in any case or as the name it updates, stays GrapheneOS's.
             check(listed(their("app.vanadium.browser", "org.chromium.chrome"), our("app.vanadium.browser"), our("App.Vanadium.Browser"),
                 our("org.chromium.chrome")) == listOf(Catalog.GrapheneOS to "app.vanadium.browser"))
@@ -749,6 +762,22 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(b'Ed' + bytes.fromhex('2d67012ed5baf5'), base64.b64decode(grapheneos, validate=True)[:9])
         self.assertNotEqual(key[1], grapheneos)
         self.assertIn(f'require(catalogKey != "{grapheneos}")', gradle)
+        # A pinned maker's source is a PackageSource of its own, right after ours, with its string, and Repo.kt takes
+        # every entry's source through sourceName().
+        repo = (ROOT / 'app/src/main/java/app/grapheneos/apps/core/Repo.kt').read_text()
+        enum = re.search(r'enum class PackageSource\([^)]*\) \{\n(.*?)\n\}', repo, re.S)[1]
+        sources = re.findall(r'^\s*(\w+)\(R\.string\.(\w+)\),', enum, re.M)
+        self.assertEqual([name for name, _ in sources], ['DiamaneOS', 'Fairphone', 'GrapheneOS', 'GrapheneOS_build', 'Mirror', 'Google'])
+        self.assertEqual(dict(sources)['Fairphone'], 'pkg_source_fairphone')
+        strings = (ROOT / 'app/src/main/res/values/strings.xml').read_text()
+        self.assertIn('<string name="pkg_source_fairphone">Fairphone (mirror)</string>', strings)
+        pinned = re.search(r'val PINNED_PACKAGE_SOURCES = mapOf\(([^)]*)\)', catalogs)[1]
+        self.assertEqual(re.findall(r'"([^"]+)" to "([^"]+)"', pinned), [('com.fps.camera', 'Fairphone')])
+        self.assertEqual(1, repo.count('sourceName(catalog, packageName, json.opt("source") as String?)'))
+        self.assertEqual(1, repo.count('json.opt("source") as String?).let'))
+        # The search screen's source filters stay the four that catalogs name. Ours and the maker's have none.
+        search = (ROOT / 'app/src/main/java/app/grapheneos/apps/ui/SearchScreen.kt').read_text()
+        self.assertEqual(sorted(re.findall(r'to PackageSource\.(\w+)', search)), ['Google', 'GrapheneOS', 'GrapheneOS_build', 'Mirror'])
         sources = ROOT / 'app/src/main/java/app/grapheneos/apps'
         self.assertEqual(1, sum(f.read_text().count(grapheneos) for f in sources.rglob('*.kt')))
         install = (sources / 'core/InstallTask.kt').read_text()

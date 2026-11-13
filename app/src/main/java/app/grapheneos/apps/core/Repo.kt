@@ -152,6 +152,8 @@ fun findRPackage(variants: List<RPackage>, channel: ReleaseChannel): RPackage {
 
 enum class PackageSource(@param:StringRes val uiName: Int) {
     DiamaneOS(R.string.pkg_source_diamaneos),
+    // DiamaneOS: a pinned maker's app from our catalog (PINNED_PACKAGE_SOURCES). Listed after our own apps.
+    Fairphone(R.string.pkg_source_fairphone),
     GrapheneOS(R.string.pkg_source_grapheneos),
     GrapheneOS_build(R.string.pkg_source_grapheneos_build),
     Mirror(R.string.pkg_source_mirror),
@@ -176,7 +178,8 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
     }
 
     val description = json.opt("description") as String?
-    val source: PackageSource = (json.opt("source") as String?).let {
+    // DiamaneOS: sourceName() gives a pinned maker's app from our catalog its maker's source line.
+    val source: PackageSource = sourceName(catalog, packageName, json.opt("source") as String?).let {
         if (it != null) {
             PackageSource.valueOf(it)
         } else {
