@@ -775,9 +775,20 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(re.findall(r'"([^"]+)" to "([^"]+)"', pinned), [('com.fps.camera', 'Fairphone')])
         self.assertEqual(1, repo.count('sourceName(catalog, packageName, json.opt("source") as String?)'))
         self.assertEqual(1, repo.count('json.opt("source") as String?).let'))
-        # The search screen's source filters stay the four that catalogs name. Ours and the maker's have none.
+        # Every source has a search filter, and its chip shows the source's own string. Ours and the maker's come first.
+        # Apps our servers pass on unchanged say so in their source line.
         search = (ROOT / 'app/src/main/java/app/grapheneos/apps/ui/SearchScreen.kt').read_text()
-        self.assertEqual(sorted(re.findall(r'to PackageSource\.(\w+)', search)), ['Google', 'GrapheneOS', 'GrapheneOS_build', 'Mirror'])
+        filters = dict(re.findall(r'views\.pkgSource(\w+) to PackageSource\.(\w+)', search))
+        self.assertEqual(sorted(filters.values()), sorted(name for name, _ in sources))
+        layout = (ROOT / 'app/src/main/res/layout/search_screen.xml').read_text()
+        chips = re.findall(r'android:id="@\+id/pkg_source_(\w+)"[^>]*?android:text="@string/(\w+)"', layout)
+        self.assertEqual([c for c, _ in chips[:2]], ['DiamaneOS', 'Fairphone'])
+        # The view binding drops the underscores of an id.
+        self.assertEqual({c.replace('_', '').lower(): t for c, t in chips},
+                         {view.lower(): dict(sources)[name] for view, name in filters.items()})
+        for name, label in [('grapheneos', 'GrapheneOS (mirror)'), ('grapheneos_build', 'GrapheneOS build (mirror)'),
+                            ('google', 'Google (mirror)'), ('fairphone', 'Fairphone (mirror)'), ('diamaneos', 'DiamaneOS')]:
+            self.assertIn(f'<string name="pkg_source_{name}">{label}</string>', strings)
         sources = ROOT / 'app/src/main/java/app/grapheneos/apps'
         self.assertEqual(1, sum(f.read_text().count(grapheneos) for f in sources.rglob('*.kt')))
         install = (sources / 'core/InstallTask.kt').read_text()

@@ -49,6 +49,20 @@
             app:singleLine="true">
 
             <com.google.android.material.chip.Chip
+                android:id="@+id/pkg_source_DiamaneOS"
+                style="@style/Widget.Material3.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/pkg_source_diamaneos" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/pkg_source_Fairphone"
+                style="@style/Widget.Material3.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/pkg_source_fairphone" />
+
+            <com.google.android.material.chip.Chip
                 android:id="@+id/pkg_source_GrapheneOS"
                 style="@style/Widget.Material3.Chip.Filter"
                 android:layout_width="wrap_content"

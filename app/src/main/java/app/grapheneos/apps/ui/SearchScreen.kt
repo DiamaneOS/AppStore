@@ -57,7 +57,10 @@ class SearchScreen : PackageListFragment<SearchScreenBinding>() {
             updateList()
         }
 
+        // DiamaneOS: our own apps and a pinned maker's apps get a filter too.
         val srcFilters = mapOf(
+            views.pkgSourceDiamaneOS to PackageSource.DiamaneOS,
+            views.pkgSourceFairphone to PackageSource.Fairphone,
             views.pkgSourceGrapheneOS to PackageSource.GrapheneOS,
             views.pkgSourceMirror to PackageSource.Mirror,
             views.pkgSourceGoogle to PackageSource.Google,
