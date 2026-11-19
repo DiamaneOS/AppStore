@@ -10,22 +10,22 @@ import java.security.MessageDigest
 // DiamaneOS: two signed catalogs. Each package can come from only one of them, so neither key can
 // offer the other catalog's apps.
 
-// SHA-256 of our app signing certificates: App Store, Camera (and CameraProcessor), Auditor. Our
-// catalog may list only packages signed with one of them.
+// SHA-256 of the DiamaneOS app signing certificates: App Store, Camera (and CameraProcessor), Auditor.
+// Its catalog may list only packages signed with one of them.
 val DIAMANEOS_SIGNERS = setOf(
     "559ffb104edd9386a39d512063cb7458c5ec0e29c9b52a91068ce950dd768a47",
     "285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61",
     "427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec",
 )
 
-// Our builds that replace GrapheneOS's. GrapheneOS's catalog never lists them.
+// DiamaneOS builds that replace GrapheneOS's. GrapheneOS's catalog never lists them.
 val DIAMANEOS_PACKAGES = setOf("app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor")
 
-// Other makers' apps our catalog offers, each by its exact name bound to its signer lineage: the SHA-256
-// of each certificate the maker's key has had, oldest first. Only a signer of that lineage is accepted for
-// that name, and only from our catalog. Every other entry of ours needs one of our signers.
+// Other makers' apps the DiamaneOS catalog offers, each by its exact name bound to its signer lineage: the
+// SHA-256 of each certificate the maker's key has had, oldest first. Only a signer of that lineage is accepted
+// for that name, and only from that catalog. Every other entry there needs a DIAMANEOS_SIGNERS signer.
 // - com.fps.camera: Fairphone's own camera app, signed by TCL, whose key was rotated once. Its APK is signed
-//   with the second certificate and carries both as its certificate history. It needs the FP6's camera
+//   with the second certificate and carries both as its certificate history. It needs a vendor camera
 //   algorithm service, so its versions list features that only OS builds with that service declare. The OS
 //   runs it without network access.
 val PINNED_PACKAGES = mapOf(
@@ -35,24 +35,25 @@ val PINNED_PACKAGES = mapOf(
     ),
 )
 
-// Whether our catalog's entry for this name may carry this signer. The entry lists the certificate that
-// signs the APK, which for a pinned name is one of its lineage.
+// Whether the DiamaneOS catalog's entry for this name may carry this signer. The entry lists the certificate
+// that signs the APK, which for a pinned name is one of its lineage.
 fun allowedSigner(name: String, signer: String): Boolean =
     PINNED_PACKAGES[name]?.contains(signer) ?: (signer in DIAMANEOS_SIGNERS)
 
-// The source line the App Store shows for a pinned maker's app, as the name of a PackageSource. Our catalog
-// lists the app with source DiamaneOS, the only value earlier App Store versions take from it, so the line is
-// given here. No catalog may name such a source itself.
+// The source line the App Store shows for a pinned maker's app, as the name of a PackageSource. The app's
+// catalog entry names source DiamaneOS, the only value earlier App Store versions take from it, so the line
+// is given here. No catalog may name such a source itself.
 val PINNED_PACKAGE_SOURCES = mapOf("com.fps.camera" to "Fairphone")
 
-// The PackageSource name of an entry: the pinned maker's for its package in our catalog, else the one the
-// catalog names, or null when it names none.
+// The PackageSource name of an entry: the pinned maker's for its package in the DiamaneOS catalog, else the
+// one the catalog names, or null when it names none.
 fun sourceName(catalog: Catalog, packageName: String, named: String?): String? {
     require(named !in PINNED_PACKAGE_SOURCES.values) { "a catalog may not name the source $named" }
     return if (catalog == Catalog.DiamaneOS) PINNED_PACKAGE_SOURCES[packageName] ?: named else named
 }
 
-// GrapheneOS's apps we never list. Info shows GrapheneOS's release news, and our Auditor replaces its Auditor.
+// GrapheneOS's apps never listed. Info shows GrapheneOS's release news, and the DiamaneOS Auditor replaces
+// its Auditor.
 val EXCLUDED_PACKAGES = setOf("app.grapheneos.info", "app.attestation.auditor")
 
 // GrapheneOS's catalog key 0, from its App Store source. It signs only GrapheneOS's catalog.
@@ -67,9 +68,9 @@ enum class Catalog(
     // Older catalogs are refused on a phone without one. Raise both at each rebase, as GrapheneOS does.
     val minTimestamp: Long,
 ) {
-    // Our offline catalog key signs our own apps.
+    // The DiamaneOS offline catalog key signs the catalog of its own apps.
     DiamaneOS(BuildConfig.REPO_PUBLIC_KEY, BuildConfig.REPO_KEY_VERSION, "", "repo", 1_792_550_000L),
-    // GrapheneOS's signed catalog and APKs, served unchanged by our servers.
+    // GrapheneOS's signed catalog and APKs, served unchanged by the DiamaneOS servers.
     GrapheneOS(GRAPHENEOS_CATALOG_KEY, "0", "grapheneos/", "repo-grapheneos", 1_792_550_000L);
 
     val path: String
@@ -88,8 +89,8 @@ enum class Catalog(
         }
     }
 
-    // Our builds use upstream's version x 100 + our revision. Version gates in GrapheneOS's catalog
-    // name upstream versions, so they are compared with ours divided by 100.
+    // DiamaneOS builds use upstream's version x 100 + their own revision. Version gates in GrapheneOS's
+    // catalog name upstream versions, so they are compared with the build's version divided by 100.
     fun dependencyVersion(packageName: String, versionCode: Long): Long =
         if (this == GrapheneOS && packageName in DIAMANEOS_PACKAGES) versionCode / 100 else versionCode
 }
@@ -100,9 +101,9 @@ data class CatalogEntry(val catalog: Catalog, val name: String, val json: JSONOb
 // The namespace GrapheneOS's catalog can never list (Catalog.lists), so its names need no check against it.
 private fun inDiamaneOSNamespace(name: String) = name == "de.diamaneos" || name.startsWith("de.diamaneos.")
 
-// The entries the App Store takes. Ours must list one of our signers, and a name GrapheneOS's catalog
-// lists is GrapheneOS's, so ours may not list it. While GrapheneOS's catalog is missing, its names
-// are unknown and ours lists only DIAMANEOS_PACKAGES and names in our own namespace.
+// The entries the App Store takes. An entry of the DiamaneOS catalog must list an allowed signer and may not
+// take a name GrapheneOS's catalog lists. While GrapheneOS's catalog is missing, its names are unknown, so
+// only DIAMANEOS_PACKAGES, PINNED_PACKAGES and names in the de.diamaneos namespace are listed.
 fun listedEntries(entries: List<CatalogEntry>, grapheneOSMissing: Boolean): List<CatalogEntry> {
     val listed = entries.filter { it.catalog.lists(it.name, it.originalPackage, it.source) }
     val grapheneOS = listed.filter { it.catalog == Catalog.GrapheneOS }
@@ -115,10 +116,10 @@ fun listedEntries(entries: List<CatalogEntry>, grapheneOSMissing: Boolean): List
     }
 }
 
-// Before install, an APK from our catalog must have one signer that its package may carry (allowedSigner)
-// and that is listed in its entry. Our own APKs have no rotation. A pinned maker's APK may carry past
-// certificates: then its certificate history must be the pinned lineage up to its signer, in that order
-// and nothing else. SigningInfo.apkContentsSigners is the certificate that signs the APK, and
+// Before install, a DiamaneOS catalog APK must have one signer that its package may carry (allowedSigner)
+// and that is listed in its entry. APKs signed with DIAMANEOS_SIGNERS have no rotation. A pinned maker's APK
+// may carry past certificates: then its certificate history must be the pinned lineage up to its signer, in
+// that order and nothing else. SigningInfo.apkContentsSigners is the certificate that signs the APK, and
 // signingCertificateHistory is the rotation record, oldest first, which ends with that certificate.
 fun checkDiamaneOSSigner(name: String, packageName: String, info: SigningInfo?, listed: Array<ByteArray>) {
     fun sha256(signature: Signature) = MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())

@@ -152,7 +152,8 @@ fun findRPackage(variants: List<RPackage>, channel: ReleaseChannel): RPackage {
 
 enum class PackageSource(@param:StringRes val uiName: Int) {
     DiamaneOS(R.string.pkg_source_diamaneos),
-    // DiamaneOS: a pinned maker's app from our catalog (PINNED_PACKAGE_SOURCES). Listed after our own apps.
+    // DiamaneOS: a pinned maker's app from its catalog (PINNED_PACKAGE_SOURCES). Listed after its own
+    // apps.
     Fairphone(R.string.pkg_source_fairphone),
     GrapheneOS(R.string.pkg_source_grapheneos),
     GrapheneOS_build(R.string.pkg_source_grapheneos_build),
@@ -178,7 +179,7 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
     }
 
     val description = json.opt("description") as String?
-    // DiamaneOS: sourceName() gives a pinned maker's app from our catalog its maker's source line.
+    // DiamaneOS: sourceName() gives a pinned maker's app its maker's source line.
     val source: PackageSource = sourceName(catalog, packageName, json.opt("source") as String?).let {
         if (it != null) {
             PackageSource.valueOf(it)
@@ -248,7 +249,7 @@ class RPackageContainer(val repo: Repo, val catalog: Catalog, val packageName: S
             }
 
             // DiamaneOS: a variant that lists system features is offered only on an OS build that declares
-            // all of them, for apps that need the OS's own parts (the FP6's Fairphone Camera).
+            // all of them, for apps that need the OS's own parts (such as the Fairphone Camera).
             val features = jo.optJSONArray("features")?.asStringList()
             if (features != null && features.any { maybeGetSystemFeatureInfo(it) == null }) {
                 continue
