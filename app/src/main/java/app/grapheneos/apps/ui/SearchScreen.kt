@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.os.postDelayed
+import androidx.core.view.isVisible
 import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.MutableLiveData
@@ -12,6 +13,7 @@ import app.grapheneos.apps.core.PackageSource
 import app.grapheneos.apps.core.mainHandler
 import app.grapheneos.apps.databinding.SearchScreenBinding
 import app.grapheneos.apps.util.requestKeyboard
+import com.google.android.material.chip.Chip
 import java.util.EnumSet
 
 class SearchScreen : PackageListFragment<SearchScreenBinding>() {
@@ -35,6 +37,8 @@ class SearchScreen : PackageListFragment<SearchScreenBinding>() {
 
     private var viewCreatedAtLeastOnce = false
 
+    private var srcFilters: Map<Chip, PackageSource> = emptyMap()
+
     override fun onViewsCreated(views: SearchScreenBinding, savedInstanceState: Bundle?) {
         createListAdapter(views.appList)
 
@@ -57,8 +61,9 @@ class SearchScreen : PackageListFragment<SearchScreenBinding>() {
             updateList()
         }
 
-        // DiamaneOS: our own apps and a pinned maker's apps get a filter too.
-        val srcFilters = mapOf(
+        // DiamaneOS: the DiamaneOS apps and a pinned maker's apps get a filter too. Only the sources this
+        // phone is offered an app from are shown (updateSourceFilters).
+        srcFilters = mapOf(
             views.pkgSourceDiamaneOS to PackageSource.DiamaneOS,
             views.pkgSourceFairphone to PackageSource.Fairphone,
             views.pkgSourceGrapheneOS to PackageSource.GrapheneOS,
@@ -82,7 +87,22 @@ class SearchScreen : PackageListFragment<SearchScreenBinding>() {
         }
     }
 
+    // DiamaneOS: a source has a filter only while this phone is offered a listed app from it, so no
+    // phone shows a filter for another device's maker. A filter that goes away is cleared, or it
+    // would keep the list empty.
+    private fun updateSourceFilters() {
+        val offered = EnumSet.noneOf(PackageSource::class.java)
+        packages.values.forEach {
+            if (it.rPackage.common.isTopLevel) offered.add(it.rPackage.source)
+        }
+        srcFilters.forEach { (chip, source) ->
+            chip.isVisible = source in offered
+            if (source !in offered && chip.isChecked) model.modifyFilter(source, false)
+        }
+    }
+
     override fun updateList() {
+        updateSourceFilters()
         val selectedSources = model.selectedSources.value!!
         val query = model.searchQuery.value!!
         val list = packages.values.filter {

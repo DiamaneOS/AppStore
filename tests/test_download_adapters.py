@@ -780,6 +780,10 @@ class AdapterTests(unittest.TestCase):
         search = (ROOT / 'app/src/main/java/app/grapheneos/apps/ui/SearchScreen.kt').read_text()
         filters = dict(re.findall(r'views\.pkgSource(\w+) to PackageSource\.(\w+)', search))
         self.assertEqual(sorted(filters.values()), sorted(name for name, _ in sources))
+        # A source's filter shows only while this phone is offered a listed app from it, and is cleared when it goes.
+        self.assertIn('chip.isVisible = source in offered', search)
+        self.assertIn('if (source !in offered && chip.isChecked) model.modifyFilter(source, false)', search)
+        self.assertRegex(search, r'override fun updateList\(\) \{\n        updateSourceFilters\(\)')
         layout = (ROOT / 'app/src/main/res/layout/search_screen.xml').read_text()
         chips = re.findall(r'android:id="@\+id/pkg_source_(\w+)"[^>]*?android:text="@string/(\w+)"', layout)
         self.assertEqual([c for c, _ in chips[:2]], ['DiamaneOS', 'Fairphone'])
